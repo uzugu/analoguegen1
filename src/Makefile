@@ -8,7 +8,7 @@ GBRT_DIR    := $(ROOT)/third_party/gb-recompiled/runtime
 BUILD_DIR   := $(ROOT)/build
 OBJ_DIR     := $(BUILD_DIR)/obj
 
-BACKEND     ?= peanut
+BACKEND     ?= native
 RECOMP_DIR  ?= $(ROOT)/generated/pokered
 
 USE_SDK_CONTAINER := 0
@@ -45,8 +45,8 @@ GBRT_SRCS := \
 RECOMP_SRCS := $(filter-out %/main.c %_main.c,$(wildcard $(RECOMP_DIR)/*.c))
 SRCS        := $(COMMON_SRCS) core/gb_brain_recomp.c $(GBRT_SRCS) $(RECOMP_SRCS)
 
-CFLAGS += -std=gnu11 -O3 -I$(CURDIR) -I$(CURDIR)/core -I$(CURDIR)/voxel -I$(CURDIR)/render -I$(CURDIR)/mods -I$(GBRT_DIR)/include -I$(RECOMP_DIR)
-else
+CFLAGS += -std=gnu11 -Os -Wno-unused-variable -Wno-unused-label -Wno-unused-function -Wno-unused-parameter -I$(CURDIR) -I$(CURDIR)/core -I$(CURDIR)/voxel -I$(CURDIR)/render -I$(CURDIR)/mods -I$(GBRT_DIR)/include -I$(RECOMP_DIR)
+else ifeq ($(BACKEND),peanut)
 SRCS := $(COMMON_SRCS) \
 	core/gb_brain.c \
 	core/gb_audio.c \
@@ -55,6 +55,11 @@ SRCS := $(COMMON_SRCS) \
 CFLAGS += -O3 -I$(CURDIR) -I$(CURDIR)/core -I$(CURDIR)/voxel -I$(CURDIR)/render -I$(CURDIR)/mods -I$(PEANUT_DIR) -I$(APU_DIR)
 CFLAGS += -DENABLE_SOUND=1 -DAUDIO_SAMPLE_RATE=24000 -DMINIGB_APU_AUDIO_FORMAT_S16SYS
 CFLAGS += -DENABLE_LCD=1 -DPEANUT_GB_12_COLOUR=0 -DPEANUT_GB_HIGH_LCD_ACCURACY=0
+else
+SRCS := $(COMMON_SRCS) \
+	core/gb_brain_native.c
+
+CFLAGS += -O3 -I$(CURDIR) -I$(CURDIR)/core -I$(CURDIR)/voxel -I$(CURDIR)/render -I$(CURDIR)/mods
 endif
 
 .DEFAULT_GOAL := pocket

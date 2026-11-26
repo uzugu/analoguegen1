@@ -26,15 +26,20 @@ jobs:
             pkg-config \
             make
 
-      - name: Build Analogue Pocket RISC-V ELF (Peanut-GB)
+      - name: Build Analogue Pocket RISC-V ELF (Native C Engine)
         run: make pocket
+
+      - name: Verify Peanut-GB RISC-V ELF
+        run: |
+          make -C src clean
+          make -C src BACKEND=peanut pocket
 
       - name: Verify Static Recompilation Runtime ELF (gb-recompiled RV32)
         run: |
           make -C src clean
           make -C src BACKEND=recomp pocket
 
-      - name: Rebuild Peanut-GB ELF for artifact
+      - name: Rebuild Native C Engine ELF for artifact
         run: |
           make -C src clean
           make -C src pocket

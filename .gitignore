@@ -18,6 +18,7 @@ roms/
 saves/
 generated/
 tools/gbrecomp/
+tools/xpack-riscv/
 
 # OS / Editor clutter
 .DS_Store
