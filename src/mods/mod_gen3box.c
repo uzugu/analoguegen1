@@ -1,4 +1,6 @@
 #include "mod_manager.h"
+#include "gb_brain.h"
+#include "pokered_ram.h"
 #include "renderer.h"
 
 #include <stdio.h>
@@ -113,6 +115,151 @@ static void species_visual_lookup(uint8_t sp, char *out_label, size_t label_sz,
     *out_accent = RGB565(168, 234, 218);
 }
 
+static void sync_party_wram_and_snap(app_state_t *state, uint8_t party_count,
+                                     const uint8_t party_sp[PARTY_SLOTS]) {
+    gb_brain_write8(GB_ADDR_PARTY_COUNT, party_count);
+    state->snap.party_count = party_count;
+    for (int i = 0; i < PARTY_SLOTS; i++) {
+        gb_brain_write8((uint16_t)(GB_ADDR_PARTY_SPECIES + (uint16_t)i), party_sp[i]);
+        state->snap.party_species[i] = party_sp[i];
+    }
+    state->snap.lead_species = (party_count > 0u) ? party_sp[0] : 0u;
+}
+
+static void sync_box_slot_and_count(app_state_t *state, int idx, uint8_t sp,
+                                    const uint8_t box_sp[APP_MAX_BOX_MONS]) {
+    gb_brain_write8((uint16_t)(GB_ADDR_BOX_SPECIES + (uint16_t)idx), sp);
+    state->snap.box_species[idx] = sp;
+
+    uint8_t cnt = 0u;
+    for (int i = 0; i < APP_MAX_BOX_MONS; i++) {
+        if (!species_is_empty(box_sp[i])) {
+            cnt++;
+        }
+    }
+    gb_brain_write8(GB_ADDR_BOX_COUNT, cnt);
+    state->snap.box_count = cnt;
+}
+
+static bool slot_is_occupied_wram(bool is_party, int idx) {
+    if (is_party) {
+        if (idx < 0 || idx >= PARTY_SLOTS) {
+            return false;
+        }
+        uint8_t party_count = gb_brain_read8(GB_ADDR_PARTY_COUNT);
+        if (party_count > PARTY_SLOTS) {
+            party_count = PARTY_SLOTS;
+        }
+        if (idx >= (int)party_count) {
+            return false;
+        }
+        uint8_t sp = gb_brain_read8((uint16_t)(GB_ADDR_PARTY_SPECIES + (uint16_t)idx));
+        return !species_is_empty(sp);
+    }
+
+    if (idx < 0 || idx >= APP_MAX_BOX_MONS) {
+        return false;
+    }
+    uint8_t sp = gb_brain_read8((uint16_t)(GB_ADDR_BOX_SPECIES + (uint16_t)idx));
+    return !species_is_empty(sp);
+}
+
+static void gen3box_perform_swap(app_state_t *state,
+                                 bool src_party, int src_idx,
+                                 bool dst_party, int dst_idx) {
+    uint8_t party_count = gb_brain_read8(GB_ADDR_PARTY_COUNT);
+    if (party_count > PARTY_SLOTS) {
+        party_count = PARTY_SLOTS;
+    }
+
+    uint8_t party_sp[PARTY_SLOTS];
+    for (int i = 0; i < PARTY_SLOTS; i++) {
+        party_sp[i] = gb_brain_read8((uint16_t)(GB_ADDR_PARTY_SPECIES + (uint16_t)i));
+    }
+
+    uint8_t box_sp[APP_MAX_BOX_MONS];
+    for (int i = 0; i < APP_MAX_BOX_MONS; i++) {
+        box_sp[i] = gb_brain_read8((uint16_t)(GB_ADDR_BOX_SPECIES + (uint16_t)i));
+    }
+
+    if (!src_party && !dst_party) {
+        if (src_idx < 0 || src_idx >= APP_MAX_BOX_MONS ||
+            dst_idx < 0 || dst_idx >= APP_MAX_BOX_MONS ||
+            species_is_empty(box_sp[src_idx])) {
+            return;
+        }
+        uint8_t tmp = box_sp[src_idx];
+        box_sp[src_idx] = species_is_empty(box_sp[dst_idx]) ? 0xFFu : box_sp[dst_idx];
+        box_sp[dst_idx] = tmp;
+
+        gb_brain_write8((uint16_t)(GB_ADDR_BOX_SPECIES + (uint16_t)src_idx), box_sp[src_idx]);
+        state->snap.box_species[src_idx] = box_sp[src_idx];
+        sync_box_slot_and_count(state, dst_idx, box_sp[dst_idx], box_sp);
+        return;
+    }
+
+    if (src_party && dst_party) {
+        if (src_idx < 0 || src_idx >= (int)party_count ||
+            dst_idx < 0 || dst_idx >= (int)party_count ||
+            species_is_empty(party_sp[src_idx]) ||
+            species_is_empty(party_sp[dst_idx])) {
+            return;
+        }
+        uint8_t tmp = party_sp[src_idx];
+        party_sp[src_idx] = party_sp[dst_idx];
+        party_sp[dst_idx] = tmp;
+
+        sync_party_wram_and_snap(state, party_count, party_sp);
+        return;
+    }
+
+    int p_idx = src_party ? src_idx : dst_idx;
+    int b_idx = src_party ? dst_idx : src_idx;
+    if (p_idx < 0 || p_idx >= PARTY_SLOTS || b_idx < 0 || b_idx >= APP_MAX_BOX_MONS) {
+        return;
+    }
+
+    bool p_occ = (p_idx < (int)party_count) && !species_is_empty(party_sp[p_idx]);
+    bool b_occ = !species_is_empty(box_sp[b_idx]);
+
+    if (p_occ && b_occ) {
+        uint8_t tmp = party_sp[p_idx];
+        party_sp[p_idx] = box_sp[b_idx];
+        box_sp[b_idx]  = tmp;
+
+        sync_party_wram_and_snap(state, party_count, party_sp);
+        sync_box_slot_and_count(state, b_idx, box_sp[b_idx], box_sp);
+    } else if (p_occ && !b_occ) {
+        if (party_count <= 1u) {
+            return;
+        }
+        box_sp[b_idx] = party_sp[p_idx];
+        for (int i = p_idx; i < (int)party_count - 1; i++) {
+            party_sp[i] = party_sp[i + 1];
+        }
+        party_count--;
+        for (int i = (int)party_count; i < PARTY_SLOTS; i++) {
+            party_sp[i] = 0xFFu;
+        }
+
+        sync_party_wram_and_snap(state, party_count, party_sp);
+        sync_box_slot_and_count(state, b_idx, box_sp[b_idx], box_sp);
+    } else if (!p_occ && b_occ) {
+        if (party_count >= PARTY_SLOTS) {
+            return;
+        }
+        party_sp[party_count] = box_sp[b_idx];
+        party_count++;
+        for (int i = (int)party_count; i < PARTY_SLOTS; i++) {
+            party_sp[i] = 0xFFu;
+        }
+        box_sp[b_idx] = 0xFFu;
+
+        sync_party_wram_and_snap(state, party_count, party_sp);
+        sync_box_slot_and_count(state, b_idx, box_sp[b_idx], box_sp);
+    }
+}
+
 static void gen3box_init(app_state_t *state) {
     (void)state;
     s_in_party      = false;
@@ -177,9 +324,14 @@ void mod_gen3box_input(app_state_t *state, bool up, bool down, bool left, bool r
 
     if (action) {
         int cur_idx = s_in_party ? s_party_row : (s_box_row * BOX_COLS + s_box_col);
-        if (s_marked_active && s_marked_party == s_in_party && s_marked_idx == cur_idx) {
-            s_marked_active = false;
-        } else {
+        if (s_marked_active) {
+            if (s_marked_party == s_in_party && s_marked_idx == cur_idx) {
+                s_marked_active = false;
+            } else {
+                gen3box_perform_swap(state, s_marked_party, s_marked_idx, s_in_party, cur_idx);
+                s_marked_active = false;
+            }
+        } else if (slot_is_occupied_wram(s_in_party, cur_idx)) {
             s_marked_active = true;
             s_marked_party  = s_in_party;
             s_marked_idx    = cur_idx;
@@ -354,7 +506,7 @@ void mod_gen3box_render(const app_state_t *state) {
     const int foot_y = RENDER_H - 20;
     renderer_fill_rect(1, foot_y, RENDER_W - 2, 19, col_header);
     renderer_draw_rect(0, foot_y - 1, RENDER_W, 1, col_border);
-    renderer_draw_text(8, foot_y + 6, "D-PAD:Move  B/R+SEL:Close", col_dim, col_header, false);
+    renderer_draw_text(8, foot_y + 6, "D-PAD:Move  A:Pick/Swap  B/R+SEL:Close", col_dim, col_header, false);
 }
 
 void mod_gen3box_register(void) {

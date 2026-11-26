@@ -73,6 +73,8 @@ typedef struct {
     game_snapshot_t snap;
     /* Camera pitch rung for Dramatic Shape Voxel mod: 0=OFF, 15, 35, 50, 75 */
     int             voxel_pitch_deg;
+    /* Daytime lighting mode: 0=DAY, 1=DUSK, 2=NIGHT, 3=DAWN */
+    uint8_t         daytime_mode;
     /* Live frame performance counters */
     uint16_t        perf_fps;
     uint16_t        perf_gb_ms;

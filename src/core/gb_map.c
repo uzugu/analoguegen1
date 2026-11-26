@@ -30,10 +30,20 @@ static uint16_t read_le16(uint16_t addr)
     return (uint16_t)(lo | (hi << 8));
 }
 
-static uint8_t classify_tile(uint8_t tid, uint8_t tileset, const bool walkable[256])
+static bool is_flat_walkable(uint8_t cls)
+{
+    return cls == (uint8_t)TILE_CLASS_GROUND || cls == (uint8_t)TILE_CLASS_GRASS;
+}
+
+static uint8_t classify_tile(uint8_t tid, uint8_t tileset, uint8_t grass_tile,
+                             const bool walkable[256])
 {
     if (tid == 0x14U) {
         return (uint8_t)TILE_CLASS_WATER;
+    }
+    if ((grass_tile != 0xFFU && tid == grass_tile) ||
+        (tileset == 0U && (tid == 0x03U || tid == 0x52U || tid == 0x2CU))) {
+        return (uint8_t)TILE_CLASS_GRASS;
     }
     if (walkable[tid]) {
         return (uint8_t)TILE_CLASS_GROUND;
@@ -41,6 +51,11 @@ static uint8_t classify_tile(uint8_t tid, uint8_t tileset, const bool walkable[2
     if (tileset == 0U &&
         (tid == 0x27U || tid == 0x36U || tid == 0x37U || tid == 0x38U)) {
         return (uint8_t)TILE_CLASS_LEDGE;
+    }
+    if (tileset == 0U &&
+        (tid == 0x01U || tid == 0x02U || tid == 0x32U ||
+         tid == 0x33U || tid == 0x34U || tid == 0x35U)) {
+        return (uint8_t)TILE_CLASS_FENCE;
     }
     if (tileset == 0U &&
         ((tid >= 0x05U && tid <= 0x0FU) || (tid >= 0x15U && tid <= 0x1FU))) {
@@ -155,19 +170,22 @@ bool gb_map_extract(const app_state_t *state, gb_map_view_t *out)
             uint8_t tid = gb_brain_read_rom_bank(tileset_bank, tile_addr);
 
             out->tile_id[vy][vx] = tid;
-            out->tile_class[vy][vx] = classify_tile(tid, tileset, walkable);
+            out->tile_class[vy][vx] = classify_tile(tid, tileset, grass_tile, walkable);
         }
     }
 
     /*
      * Cell-level pass (Dramatic Shape rule 3): for every 2x2 walk cell, if its
-     * bottom-left 8x8 tile is TILE_CLASS_GROUND, flatten the entire 2x2 cell
-     * to TILE_CLASS_GROUND so flowers and grass tufts stay flat.
+     * bottom-left 8x8 tile is flat walkable (TILE_CLASS_GROUND or TILE_CLASS_GRASS),
+     * flatten non-flat decorations in the 2x2 cell while preserving grass tiles.
      */
     if (!is_even(origin_ty)) {
         for (int vx = 0; vx + 1 < GB_MAP_VIEW_W; vx++) {
-            if (is_even(origin_tx + vx) && out->tile_class[0][vx] == TILE_CLASS_GROUND) {
-                out->tile_class[0][vx + 1] = TILE_CLASS_GROUND;
+            uint8_t bl = out->tile_class[0][vx];
+            if (is_even(origin_tx + vx) && is_flat_walkable(bl)) {
+                if (!is_flat_walkable(out->tile_class[0][vx + 1])) {
+                    out->tile_class[0][vx + 1] = bl;
+                }
             }
         }
     }
@@ -179,10 +197,17 @@ bool gb_map_extract(const app_state_t *state, gb_map_view_t *out)
             if (!is_even(origin_tx + vx)) {
                 continue;
             }
-            if (out->tile_class[vy + 1][vx] == TILE_CLASS_GROUND) {
-                out->tile_class[vy][vx]         = TILE_CLASS_GROUND;
-                out->tile_class[vy][vx + 1]     = TILE_CLASS_GROUND;
-                out->tile_class[vy + 1][vx + 1] = TILE_CLASS_GROUND;
+            uint8_t bl = out->tile_class[vy + 1][vx];
+            if (is_flat_walkable(bl)) {
+                if (!is_flat_walkable(out->tile_class[vy][vx])) {
+                    out->tile_class[vy][vx] = bl;
+                }
+                if (!is_flat_walkable(out->tile_class[vy][vx + 1])) {
+                    out->tile_class[vy][vx + 1] = bl;
+                }
+                if (!is_flat_walkable(out->tile_class[vy + 1][vx + 1])) {
+                    out->tile_class[vy + 1][vx + 1] = bl;
+                }
             }
         }
     }

@@ -10,10 +10,11 @@
 
 static gb_map_view_t s_map_view;
 static voxel_mesh_t  s_mesh;
-static bool          s_mesh_ready = false;
-static uint8_t       s_last_map   = 0xFFu;
-static uint8_t       s_last_px    = 0xFFu;
-static uint8_t       s_last_py    = 0xFFu;
+static bool          s_mesh_ready   = false;
+static uint8_t       s_last_map     = 0xFFu;
+static uint8_t       s_last_px      = 0xFFu;
+static uint8_t       s_last_py      = 0xFFu;
+static uint8_t       s_last_daytime = 0xFFu;
 
 static const char *dir_name(uint8_t facing_dir) {
     switch (facing_dir) {
@@ -22,6 +23,107 @@ static const char *dir_name(uint8_t facing_dir) {
         case 8:  return "W";
         case 12: return "E";
         default: return "?";
+    }
+}
+
+static const char *daytime_name(uint8_t daytime_mode) {
+    switch (daytime_mode) {
+        case 1u:  return "DUSK";
+        case 2u:  return "NIGHT";
+        case 3u:  return "DAWN";
+        case 0u:
+        default:  return "DAY";
+    }
+}
+
+static uint16_t sky_color_for_daytime(uint8_t daytime_mode) {
+    switch (daytime_mode) {
+        case 1u:  return RGB565(224, 128, 88);   /* DUSK */
+        case 2u:  return RGB565(18, 28, 64);     /* NIGHT */
+        case 3u:  return RGB565(236, 168, 140);  /* DAWN */
+        case 0u:
+        default:  return RGB565(96, 156, 232);   /* DAY */
+    }
+}
+
+static void type_palette_colors(uint8_t type_id, uint16_t *out_primary, uint16_t *out_accent) {
+    switch (type_id) {
+        case GB_TYPE_NORMAL:
+            *out_primary = RGB565(204, 184, 148);
+            *out_accent  = RGB565(240, 228, 200);
+            break;
+        case GB_TYPE_FIGHTING:
+            *out_primary = RGB565(192, 82, 64);
+            *out_accent  = RGB565(236, 178, 128);
+            break;
+        case GB_TYPE_FLYING:
+            *out_primary = RGB565(156, 176, 232);
+            *out_accent  = RGB565(236, 240, 250);
+            break;
+        case GB_TYPE_POISON:
+            *out_primary = RGB565(162, 86, 196);
+            *out_accent  = RGB565(224, 168, 240);
+            break;
+        case GB_TYPE_GROUND:
+            *out_primary = RGB565(206, 168, 98);
+            *out_accent  = RGB565(240, 218, 160);
+            break;
+        case GB_TYPE_ROCK:
+            *out_primary = RGB565(168, 152, 118);
+            *out_accent  = RGB565(218, 208, 182);
+            break;
+        case GB_TYPE_BUG:
+            *out_primary = RGB565(142, 194, 68);
+            *out_accent  = RGB565(224, 238, 132);
+            break;
+        case GB_TYPE_GHOST:
+            *out_primary = RGB565(112, 76, 158);
+            *out_accent  = RGB565(220, 86, 124);
+            break;
+        case GB_TYPE_FIRE:
+            *out_primary = RGB565(236, 108, 48);
+            *out_accent  = RGB565(250, 212, 84);
+            break;
+        case GB_TYPE_WATER:
+            *out_primary = RGB565(68, 148, 232);
+            *out_accent  = RGB565(196, 232, 252);
+            break;
+        case GB_TYPE_GRASS:
+            *out_primary = RGB565(78, 194, 92);
+            *out_accent  = RGB565(228, 104, 128);
+            break;
+        case GB_TYPE_ELECTRIC:
+            *out_primary = RGB565(248, 208, 48);
+            *out_accent  = RGB565(224, 64, 48);
+            break;
+        case GB_TYPE_PSYCHIC:
+            *out_primary = RGB565(240, 112, 168);
+            *out_accent  = RGB565(248, 212, 236);
+            break;
+        case GB_TYPE_ICE:
+            *out_primary = RGB565(116, 208, 244);
+            *out_accent  = RGB565(232, 248, 255);
+            break;
+        case GB_TYPE_DRAGON:
+            *out_primary = RGB565(108, 124, 224);
+            *out_accent  = RGB565(240, 178, 84);
+            break;
+        default:
+            *out_primary = RGB565(168, 176, 192);
+            *out_accent  = RGB565(228, 232, 240);
+            break;
+    }
+}
+
+static void battle_mon_colors(uint8_t type1, uint8_t type2,
+                              uint16_t *out_body, uint16_t *out_accent) {
+    type_palette_colors(type1, out_body, out_accent);
+    if (type2 != type1) {
+        uint16_t t2_primary = 0u;
+        uint16_t t2_accent  = 0u;
+        type_palette_colors(type2, &t2_primary, &t2_accent);
+        (void)t2_accent;
+        *out_accent = t2_primary;
     }
 }
 
@@ -75,34 +177,41 @@ static bool decode_vram_sprite_16x16(uint8_t img_idx, bool flip_x, uint16_t out_
 
 static void mod_voxel_init(app_state_t *state) {
     r3d_init();
-    s_mesh_ready = false;
-    s_last_map = 0xFFu;
-    s_last_px = 0xFFu;
-    s_last_py = 0xFFu;
+    s_mesh_ready   = false;
+    s_last_map     = 0xFFu;
+    s_last_px      = 0xFFu;
+    s_last_py      = 0xFFu;
+    s_last_daytime = 0xFFu;
     if (state && state->voxel_pitch_deg == 0) {
         state->voxel_pitch_deg = 35;
     }
 }
 
 static void mod_voxel_on_frame(app_state_t *state) {
-    if (!state || !state->rom_loaded || state->voxel_pitch_deg <= 0 || state->snap.in_battle != 0) {
+    if (!state || !state->rom_loaded || state->voxel_pitch_deg <= 0) {
         s_mesh_ready = false;
         return;
     }
+    if (state->snap.in_battle != 0) {
+        /* Keep pre-battle overworld mesh and VRAM atlas alive behind the battle scene. */
+        return;
+    }
 
-    /* Rebuild voxel mesh only when the player moves or changes map (zero idle rebuild cost). */
+    /* Rebuild voxel mesh only when the player moves, changes map, or changes daytime mode. */
     bool dirty = !s_mesh_ready ||
-                 s_last_map != state->snap.cur_map ||
-                 s_last_px  != state->snap.player_x ||
-                 s_last_py  != state->snap.player_y;
+                 s_last_map     != state->snap.cur_map ||
+                 s_last_px      != state->snap.player_x ||
+                 s_last_py      != state->snap.player_y ||
+                 s_last_daytime != state->daytime_mode;
 
     if (dirty) {
         if (gb_map_extract(state, &s_map_view)) {
             voxel_mesher_build(&s_map_view, state, &s_mesh);
-            s_mesh_ready = (s_mesh.tri_count > 0);
-            s_last_map = state->snap.cur_map;
-            s_last_px  = state->snap.player_x;
-            s_last_py  = state->snap.player_y;
+            s_mesh_ready   = (s_mesh.tri_count > 0);
+            s_last_map     = state->snap.cur_map;
+            s_last_px      = state->snap.player_x;
+            s_last_py      = state->snap.player_y;
+            s_last_daytime = state->daytime_mode;
         } else {
             s_mesh_ready = false;
         }
@@ -111,18 +220,18 @@ static void mod_voxel_on_frame(app_state_t *state) {
 
 static void mod_voxel_on_render_3d(const app_state_t *state) {
     if (!state || !state->rom_loaded || !s_mesh_ready ||
-        state->voxel_pitch_deg <= 0 || state->snap.in_battle != 0 ||
+        state->voxel_pitch_deg <= 0 ||
         state->snap.ui_overlay == (uint8_t)UI_OVERLAY_FULLSCREEN_2D) {
         return;
     }
 
-    r3d_begin_scene(RGB565(96, 152, 224));
+    r3d_begin_scene(sky_color_for_daytime(state->daytime_mode));
 
     float px = s_map_view.player_local_tx * 8.0f;
     float pz = s_map_view.player_local_ty * 8.0f;
 
     /* Smooth sub-tile walk interpolation: wXCoord/wYCoord advance at step start while wWalkCounter counts 8 -> 0. */
-    if (state->snap.walk_counter > 0 && state->snap.walk_counter <= 8) {
+    if (state->snap.in_battle == 0 && state->snap.walk_counter > 0 && state->snap.walk_counter <= 8) {
         float frac = (float)state->snap.walk_counter / 8.0f;
         px -= (float)state->snap.walk_dx * frac * 16.0f;
         pz -= (float)state->snap.walk_dy * frac * 16.0f;
@@ -130,15 +239,50 @@ static void mod_voxel_on_render_3d(const app_state_t *state) {
 
     r3d_camera_t cam;
     cam.target_x  = px;
-    cam.target_y  = 4.0f;
     cam.target_z  = pz;
-    cam.pitch_deg = (float)state->voxel_pitch_deg;
-    cam.yaw_deg   = 0.0f;
-    cam.distance  = 115.0f;
     cam.fov_y_deg = 45.0f;
+    if (state->snap.in_battle != 0) {
+        cam.target_y  = 6.0f;
+        cam.pitch_deg = 62.0f;
+        cam.yaw_deg   = 22.0f;
+        cam.distance  = 76.0f;
+    } else {
+        cam.target_y  = 4.0f;
+        cam.pitch_deg = (float)state->voxel_pitch_deg;
+        cam.yaw_deg   = 0.0f;
+        cam.distance  = 115.0f;
+    }
     r3d_set_camera(&cam);
 
     r3d_draw_mesh(&s_mesh, s_map_view.atlas_rgb565, GB_ATLAS_W, GB_ATLAS_H);
+
+    if (state->snap.in_battle != 0) {
+        const uint8_t active_species = gb_brain_read8(GB_ADDR_BATTLE_MON_SPECIES);
+        const uint8_t p_type1 = (active_species != 0u)
+                                ? gb_brain_read8(GB_ADDR_BATTLE_MON_TYPE1)
+                                : GB_TYPE_FIRE;
+        const uint8_t p_type2 = (active_species != 0u)
+                                ? gb_brain_read8(GB_ADDR_BATTLE_MON_TYPE2)
+                                : p_type1;
+
+        uint16_t p_body = 0u;
+        uint16_t p_acc  = 0u;
+        battle_mon_colors(p_type1, p_type2, &p_body, &p_acc);
+        r3d_draw_billboard(px - 12.0f, 0.0f, pz + 10.0f, 12.0f, 14.0f,
+                           p_body, p_acc, true);
+
+        uint16_t e_body = 0u;
+        uint16_t e_acc  = 0u;
+        battle_mon_colors(state->snap.enemy_type1, state->snap.enemy_type2, &e_body, &e_acc);
+        if (state->snap.enemy_shiny) {
+            const bool sparkle_phase = ((state->frame_count >> 3) & 1u) != 0u;
+            e_body = RGB565(255, 212, 48);
+            e_acc  = sparkle_phase ? RGB565(255, 252, 200) : RGB565(255, 172, 32);
+        }
+        r3d_draw_billboard(px + 14.0f, 0.0f, pz - 12.0f, 12.0f, 14.0f,
+                           e_body, e_acc, true);
+        return;
+    }
 
     /* Player billboard (Red: live 16x16 VRAM sprite with East horizontal mirror) */
     uint16_t spr_tex[256];
@@ -213,14 +357,22 @@ static void mod_voxel_on_render_hud(const app_state_t *state) {
     if (!state->rom_loaded) {
         snprintf(line, sizeof(line), "VOXEL 3D | PITCH:%2d | WAITING FOR ROM",
                  state->voxel_pitch_deg);
-    } else if (s_mesh_ready && state->voxel_pitch_deg > 0 && state->snap.in_battle == 0) {
-        snprintf(line, sizeof(line), "3D FPS:%2u GB:%u 3D:%u P:%d T:%d %s",
+    } else if (s_mesh_ready && state->voxel_pitch_deg > 0 && state->snap.in_battle != 0) {
+        snprintf(line, sizeof(line), "3D-BTL FPS:%2u GB:%u 3D:%u T:%d %s",
+                 (unsigned)state->perf_fps,
+                 (unsigned)state->perf_gb_ms,
+                 (unsigned)state->perf_3d_ms,
+                 s_mesh.tri_count,
+                 daytime_name(state->daytime_mode));
+    } else if (s_mesh_ready && state->voxel_pitch_deg > 0) {
+        snprintf(line, sizeof(line), "3D FPS:%2u GB:%u 3D:%u P:%d T:%d %s %s",
                  (unsigned)state->perf_fps,
                  (unsigned)state->perf_gb_ms,
                  (unsigned)state->perf_3d_ms,
                  state->voxel_pitch_deg,
                  s_mesh.tri_count,
-                 dir_name(state->snap.facing_dir));
+                 dir_name(state->snap.facing_dir),
+                 daytime_name(state->daytime_mode));
     } else {
         snprintf(line, sizeof(line), "2D FPS:%2u GB:%u MAP:%02X XY:%u,%u P:%d",
                  (unsigned)state->perf_fps,

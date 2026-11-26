@@ -18,8 +18,10 @@ static float tile_height(uint8_t cls) {
     switch (cls) {
     case TILE_CLASS_WATER:  return -2.0f;
     case TILE_CLASS_GROUND: return  0.0f;
+    case TILE_CLASS_GRASS:  return  0.0f;
     case TILE_CLASS_LEDGE:  return  6.0f;
-    case TILE_CLASS_SOLID:  return 14.0f;
+    case TILE_CLASS_FENCE:  return 10.0f;
+    case TILE_CLASS_SOLID:  return 16.0f;
     case TILE_CLASS_TALL:   return 26.0f;
     default:                return  0.0f;
     }
@@ -32,26 +34,64 @@ static float neighbor_height(const gb_map_view_t *map, int vx, int vy) {
     return tile_height(map->tile_class[vy][vx]);
 }
 
-static uint16_t shade_rgb565(uint8_t cls, float shade) {
-    float tr = 1.0f;
-    float tg = 1.0f;
-    float tb = 1.0f;
-
-    if (cls == TILE_CLASS_WATER) {
-        /* Subtle soft sky-blue tint for water */
-        tr = 0.82f;
-        tg = 0.92f;
-        tb = 1.00f;
-    } else if (cls == TILE_CLASS_TALL) {
-        /* Subtle warm tint for tall structures/roofs */
-        tr = 1.00f;
-        tg = 0.96f;
-        tb = 0.90f;
+static void class_tint(uint8_t cls, uint8_t tileset, float *tr, float *tg, float *tb) {
+    switch (cls) {
+    case TILE_CLASS_GRASS:
+        *tr = 0.58f; *tg = 0.96f; *tb = 0.56f;
+        break;
+    case TILE_CLASS_WATER:
+        *tr = 0.42f; *tg = 0.76f; *tb = 1.00f;
+        break;
+    case TILE_CLASS_LEDGE:
+        *tr = 0.96f; *tg = 0.86f; *tb = 0.68f;
+        break;
+    case TILE_CLASS_FENCE:
+        *tr = 0.92f; *tg = 0.78f; *tb = 0.58f;
+        break;
+    case TILE_CLASS_SOLID:
+        if (tileset == 0U) {
+            *tr = 0.54f; *tg = 0.88f; *tb = 0.52f;
+        } else {
+            *tr = 0.88f; *tg = 0.88f; *tb = 0.92f;
+        }
+        break;
+    case TILE_CLASS_TALL:
+        *tr = 1.00f; *tg = 0.84f; *tb = 0.76f;
+        break;
+    case TILE_CLASS_GROUND:
+    default:
+        *tr = 0.96f; *tg = 0.95f; *tb = 0.88f;
+        break;
     }
+}
 
-    int r = (int)(shade * tr * 255.0f + 0.5f);
-    int g = (int)(shade * tg * 255.0f + 0.5f);
-    int b = (int)(shade * tb * 255.0f + 0.5f);
+static void daytime_tint(uint8_t daytime_mode, float *dr, float *dg, float *db) {
+    switch (daytime_mode) {
+    case 1U: /* DUSK */
+        *dr = 1.00f; *dg = 0.78f; *db = 0.62f;
+        break;
+    case 2U: /* NIGHT */
+        *dr = 0.48f; *dg = 0.56f; *db = 0.82f;
+        break;
+    case 3U: /* DAWN */
+        *dr = 1.00f; *dg = 0.86f; *db = 0.78f;
+        break;
+    case 0U: /* DAY */
+    default:
+        *dr = 1.00f; *dg = 1.00f; *db = 1.00f;
+        break;
+    }
+}
+
+static uint16_t shade_rgb565(uint8_t cls, uint8_t tileset, uint8_t daytime_mode, float shade) {
+    float tr, tg, tb;
+    float dr, dg, db;
+    class_tint(cls, tileset, &tr, &tg, &tb);
+    daytime_tint(daytime_mode, &dr, &dg, &db);
+
+    int r = (int)(shade * tr * dr * 255.0f + 0.5f);
+    int g = (int)(shade * tg * dg * 255.0f + 0.5f);
+    int b = (int)(shade * tb * db * 255.0f + 0.5f);
 
     if (r < 0) r = 0; else if (r > 255) r = 255;
     if (g < 0) g = 0; else if (g > 255) g = 255;
@@ -91,8 +131,6 @@ static void emit_quad(voxel_mesh_t *out,
 }
 
 void voxel_mesher_build(const gb_map_view_t *map, const app_state_t *state, voxel_mesh_t *out) {
-    (void)state;
-
     if (out == NULL) {
         return;
     }
@@ -101,6 +139,11 @@ void voxel_mesher_build(const gb_map_view_t *map, const app_state_t *state, voxe
     if (map == NULL || !map->valid) {
         return;
     }
+
+    const uint8_t tileset = map->tileset;
+    const uint8_t daytime_mode = (state != NULL) ? state->daytime_mode : 0U;
+    const bool water_shimmer = (state != NULL && ((state->frame_count >> 4) & 1u) != 0u);
+    const float water_u_shift = water_shimmer ? 0.5f : 0.0f;
 
     for (int vy = 0; vy < GB_MAP_VIEW_H; vy++) {
         for (int vx = 0; vx < GB_MAP_VIEW_W; vx++) {
@@ -113,14 +156,25 @@ void voxel_mesher_build(const gb_map_view_t *map, const app_state_t *state, voxe
             const float z1 = z0 + VOXEL_TILE_SIZE;
 
             const uint8_t tid = (uint8_t)(map->tile_id[vy][vx] & 0x7Fu);
-            const float u0 = (float)(tid & 15u) * 8.0f + VOXEL_UV_INSET;
-            const float v0 = (float)(tid >> 4)  * 8.0f + VOXEL_UV_INSET;
-            const float u1 = u0 + VOXEL_UV_SPAN;
+            const float tile_u = (float)(tid & 15u) * 8.0f;
+            const float tile_v = (float)(tid >> 4)  * 8.0f;
+            float u0 = tile_u + VOXEL_UV_INSET;
+            const float v0 = tile_v + VOXEL_UV_INSET;
+            float u1 = u0 + VOXEL_UV_SPAN;
             const float v1 = v0 + VOXEL_UV_SPAN;
+
+            if (cls == (uint8_t)TILE_CLASS_WATER && water_shimmer) {
+                const float u_max = tile_u + 8.0f - VOXEL_UV_INSET;
+                u0 += water_u_shift;
+                u1 += water_u_shift;
+                if (u1 > u_max) {
+                    u1 = u_max;
+                }
+            }
 
             /* Top face (+Y): always emitted, CCW viewed from +Y */
             {
-                const uint16_t c_top = shade_rgb565(cls, FACE_SHADE_TOP);
+                const uint16_t c_top = shade_rgb565(cls, tileset, daytime_mode, FACE_SHADE_TOP);
                 emit_quad(out,
                           make_vert(x0, h, z0, u0, v0, c_top),
                           make_vert(x0, h, z1, u0, v1, c_top),
@@ -132,7 +186,7 @@ void voxel_mesher_build(const gb_map_view_t *map, const app_state_t *state, voxe
             {
                 const float nh = neighbor_height(map, vx, vy + 1);
                 if (h > nh) {
-                    const uint16_t c_south = shade_rgb565(cls, FACE_SHADE_SOUTH);
+                    const uint16_t c_south = shade_rgb565(cls, tileset, daytime_mode, FACE_SHADE_SOUTH);
                     emit_quad(out,
                               make_vert(x0, h,  z1, u0, v0, c_south),
                               make_vert(x0, nh, z1, u0, v1, c_south),
@@ -145,7 +199,7 @@ void voxel_mesher_build(const gb_map_view_t *map, const app_state_t *state, voxe
             {
                 const float nh = neighbor_height(map, vx, vy - 1);
                 if (h > nh) {
-                    const uint16_t c_north = shade_rgb565(cls, FACE_SHADE_NORTH);
+                    const uint16_t c_north = shade_rgb565(cls, tileset, daytime_mode, FACE_SHADE_NORTH);
                     emit_quad(out,
                               make_vert(x1, h,  z0, u0, v0, c_north),
                               make_vert(x1, nh, z0, u0, v1, c_north),
@@ -158,7 +212,7 @@ void voxel_mesher_build(const gb_map_view_t *map, const app_state_t *state, voxe
             {
                 const float nh = neighbor_height(map, vx + 1, vy);
                 if (h > nh) {
-                    const uint16_t c_east = shade_rgb565(cls, FACE_SHADE_EAST);
+                    const uint16_t c_east = shade_rgb565(cls, tileset, daytime_mode, FACE_SHADE_EAST);
                     emit_quad(out,
                               make_vert(x1, h,  z1, u0, v0, c_east),
                               make_vert(x1, nh, z1, u0, v1, c_east),
@@ -171,7 +225,7 @@ void voxel_mesher_build(const gb_map_view_t *map, const app_state_t *state, voxe
             {
                 const float nh = neighbor_height(map, vx - 1, vy);
                 if (h > nh) {
-                    const uint16_t c_west = shade_rgb565(cls, FACE_SHADE_WEST);
+                    const uint16_t c_west = shade_rgb565(cls, tileset, daytime_mode, FACE_SHADE_WEST);
                     emit_quad(out,
                               make_vert(x0, h,  z0, u0, v0, c_west),
                               make_vert(x0, nh, z0, u0, v1, c_west),

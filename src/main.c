@@ -61,7 +61,7 @@ static void render_footer_bar(const app_state_t *state) {
 
     renderer_fill_rect(4, y, RENDER_W - 8, 24, bg);
     renderer_draw_rect(4, y, RENDER_W - 8, 24, border);
-    renderer_draw_text(10, y + 8, "L+R:Mods  R+SEL:Box  L+SEL:HUD  L:Pitch", dim, bg, false);
+    renderer_draw_text(10, y + 8, "L+R:Mods  R+SEL:Box  L+SEL:HUD  L:Pitch  R:Time", dim, bg, false);
 }
 
 int main(int argc, char **argv) {
@@ -138,6 +138,9 @@ int main(int argc, char **argv) {
                 state.gen3box_open = true;
             } else if (of_btn_pressed(OF_BTN_L1) && !of_btn(OF_BTN_R1) && !of_btn(OF_BTN_SELECT)) {
                 state.voxel_pitch_deg = cycle_voxel_pitch(state.voxel_pitch_deg);
+            } else if (of_btn_pressed(OF_BTN_R1) && !of_btn(OF_BTN_L1) && !of_btn(OF_BTN_SELECT) &&
+                       state.snap.in_battle == 0) {
+                state.daytime_mode = (uint8_t)((state.daytime_mode + 1u) & 3u);
             }
 
             gb_input_t gb_in;
@@ -167,7 +170,6 @@ int main(int argc, char **argv) {
         bool voxel_3d_active = state.rom_loaded &&
                                mod_manager_is_enabled("dramatic_shape") &&
                                state.voxel_pitch_deg > 0 &&
-                               state.snap.in_battle == 0 &&
                                state.snap.ui_overlay != (uint8_t)UI_OVERLAY_FULLSCREEN_2D &&
                                state.snap.map_w > 0 &&
                                state.snap.map_h > 0;
@@ -186,14 +188,15 @@ int main(int argc, char **argv) {
                                    GB_LCD_W + 2, GB_LCD_H + 2,
                                    RGB565(48, 68, 96));
                 renderer_blit_gb_lcd(gb_brain_get_lcd_rgb565(), gb_dst_x, gb_dst_y);
+            } else if (state.snap.in_battle != 0 ||
+                       state.snap.ui_overlay == (uint8_t)UI_OVERLAY_DIALOGUE) {
+                /* Composite bottom battle menu / dialogue strip (rows 96..143) over 3D scene */
+                renderer_draw_rect(gb_dst_x - 1, 187, GB_LCD_W + 2, 50, RGB565(220, 228, 240));
+                renderer_blit_gb_subrect(gb_brain_get_lcd_rgb565(), 0, 96, GB_LCD_W, 48, gb_dst_x, 188);
             } else if (state.snap.ui_overlay == (uint8_t)UI_OVERLAY_START_MENU) {
                 /* Composite full right-side Start Menu (80x128) cleanly over the 3D scene */
                 renderer_draw_rect(RENDER_W - 88 - 1, 7, 82, 130, RGB565(220, 228, 240));
                 renderer_blit_gb_subrect(gb_brain_get_lcd_rgb565(), 80, 0, 80, 128, RENDER_W - 88, 8);
-            } else if (state.snap.ui_overlay == (uint8_t)UI_OVERLAY_DIALOGUE) {
-                /* Composite authentic GB bottom dialogue box (rows 96..143) over 3D scene */
-                renderer_draw_rect(gb_dst_x - 1, 187, GB_LCD_W + 2, 50, RGB565(220, 228, 240));
-                renderer_blit_gb_subrect(gb_brain_get_lcd_rgb565(), 0, 96, GB_LCD_W, 48, gb_dst_x, 188);
             }
         } else {
             render_missing_rom_screen(rom_path);

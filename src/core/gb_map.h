@@ -14,10 +14,12 @@
 #define GB_ATLAS_H    64
 
 typedef enum {
-    TILE_CLASS_GROUND = 0,  /* flat walkable ground (y = 0) */
-    TILE_CLASS_WATER,       /* recessed water (y = -2) */
-    TILE_CLASS_LEDGE,       /* low step/ledge (h = 6) */
-    TILE_CLASS_SOLID,       /* fences, bushes, trees, signs (h = 14) */
+    TILE_CLASS_GROUND = 0,  /* flat walkable path/ground (y = 0) */
+    TILE_CLASS_GRASS,       /* tall grass / lawn (y = 0, lush green tint) */
+    TILE_CLASS_WATER,       /* recessed animated water (y = -2, blue tint) */
+    TILE_CLASS_LEDGE,       /* low step/ledge (h = 6, earthy tan) */
+    TILE_CLASS_FENCE,       /* fences, signs, bushes (h = 10) */
+    TILE_CLASS_SOLID,       /* trees, walls, obstacles (h = 16) */
     TILE_CLASS_TALL         /* buildings, roofs, tall walls (h = 26) */
 } tile_class_t;
 
