@@ -308,7 +308,9 @@ void gb_brain_run_frame(app_state_t *state)
     }
 
     gb_run_frame(&gb);
-    gb_audio_push_frame();
+    if (state != NULL && state->audio_enabled) {
+        gb_audio_push_frame();
+    }
 
     /* Auto-flush SRAM ~2 seconds after the last write so saves survive power-off. */
     if (cart_ram_dirty) {

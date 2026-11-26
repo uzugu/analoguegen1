@@ -9,13 +9,15 @@ dist/
 app_pc
 app_pc.exe
 
-# User ROMs and saves (NEVER commit copyrighted ROMs or personal saves)
+# User ROMs, saves, and ROM-derived generated C code (NEVER commit copyrighted ROMs/code)
 *.gb
 *.gbc
 *.sav
 *.rtc
 roms/
 saves/
+generated/
+tools/gbrecomp/
 
 # OS / Editor clutter
 .DS_Store

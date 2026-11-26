@@ -4,3 +4,6 @@
 [submodule "third_party/Peanut-GB"]
 	path = third_party/Peanut-GB
 	url = https://github.com/deltabeard/Peanut-GB.git
+[submodule "third_party/gb-recompiled"]
+	path = third_party/gb-recompiled
+	url = https://github.com/arcanite24/gb-recompiled.git

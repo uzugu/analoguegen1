@@ -86,6 +86,7 @@ int main(int argc, char **argv) {
     mod_manager_init(&state);
 
     const int gb_dst_x = (RENDER_W - GB_LCD_W) / 2;
+    const int gb_dst_y = (RENDER_H - GB_LCD_H) / 2;
 
     unsigned int fps_window_start = of_time_ms();
     uint32_t     fps_frames = 0;
@@ -152,6 +153,7 @@ int main(int argc, char **argv) {
             gb_brain_set_input(&gb_in);
         }
 
+        state.audio_enabled = mod_manager_is_enabled("dmg_audio");
         unsigned int t_gb0 = of_time_us();
         if (state.rom_loaded) {
             gb_brain_run_frame(&state);
@@ -179,12 +181,15 @@ int main(int argc, char **argv) {
 
         if (state.rom_loaded) {
             if (!voxel_3d_active) {
-                /* Aspect-preserving full-height 2D GB LCD: 266x240 centered (10:9) */
-                renderer_blit_gb_lcd_scaled(gb_brain_get_lcd_rgb565(), 27, 0, 266, 240);
+                /* Exact 1x integer scaling (160x144 centered) — crisp uniform pixels */
+                renderer_draw_rect(gb_dst_x - 1, gb_dst_y - 1,
+                                   GB_LCD_W + 2, GB_LCD_H + 2,
+                                   RGB565(48, 68, 96));
+                renderer_blit_gb_lcd(gb_brain_get_lcd_rgb565(), gb_dst_x, gb_dst_y);
             } else if (state.snap.ui_overlay == (uint8_t)UI_OVERLAY_START_MENU) {
-                /* Composite right-side Start Menu (80x112) cleanly over the 3D scene */
-                renderer_draw_rect(RENDER_W - 88 - 1, 7, 82, 114, RGB565(220, 228, 240));
-                renderer_blit_gb_subrect(gb_brain_get_lcd_rgb565(), 80, 0, 80, 112, RENDER_W - 88, 8);
+                /* Composite full right-side Start Menu (80x128) cleanly over the 3D scene */
+                renderer_draw_rect(RENDER_W - 88 - 1, 7, 82, 130, RGB565(220, 228, 240));
+                renderer_blit_gb_subrect(gb_brain_get_lcd_rgb565(), 80, 0, 80, 128, RENDER_W - 88, 8);
             } else if (state.snap.ui_overlay == (uint8_t)UI_OVERLAY_DIALOGUE) {
                 /* Composite authentic GB bottom dialogue box (rows 96..143) over 3D scene */
                 renderer_draw_rect(gb_dst_x - 1, 187, GB_LCD_W + 2, 50, RGB565(220, 228, 240));

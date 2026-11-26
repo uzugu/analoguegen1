@@ -18,6 +18,21 @@ void mod_manager_init(app_state_t *state) {
     mod_followers_register();
     mod_wilds_register();
     mod_gen3box_register();
+    {
+        static const mod_descriptor_t audio_mod = {
+            .id              = "dmg_audio",
+            .name            = "DMG Audio",
+            .category        = "AUDIO",
+            .description     = "Synthesize Game Boy sound (best with static recomp)",
+            .enabled         = false,
+            .default_enabled = false,
+            .init            = NULL,
+            .on_frame        = NULL,
+            .on_render_3d    = NULL,
+            .on_render_hud   = NULL
+        };
+        mod_manager_register(&audio_mod);
+    }
 
     for (int i = 0; i < s_mod_count; i++) {
         if (s_mods[i].init != NULL) {
