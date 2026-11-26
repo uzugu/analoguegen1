@@ -5,9 +5,9 @@
 #include <stdint.h>
 #include "app_state.h"
 
-/* Visible 8x8 tile window extracted around the player (20x18 tiles = 160x144 world px). */
-#define GB_MAP_VIEW_W 20
-#define GB_MAP_VIEW_H 18
+/* Visible 8x8 tile window extracted around the player (14x12 tiles = 112x96 world px). */
+#define GB_MAP_VIEW_W 14
+#define GB_MAP_VIEW_H 12
 
 /* Decoded tileset atlas: 16x8 grid of 8x8 tiles (128 tiles = 0x00..0x7F). */
 #define GB_ATLAS_W    128

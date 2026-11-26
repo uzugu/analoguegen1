@@ -97,7 +97,11 @@ int main(int argc, char **argv) {
     const int gb_dst_x = (RENDER_W - GB_LCD_W) / 2;
     const int gb_dst_y = (RENDER_H - GB_LCD_H) / 2;
 
+    unsigned int fps_window_start = of_time_ms();
+    uint32_t     fps_frames = 0;
+
     while (state.running) {
+        unsigned int frame_start_us = of_time_us();
         of_input_poll();
 
         bool lr_combo = (of_btn(OF_BTN_L1) && of_btn_pressed(OF_BTN_R1)) ||
@@ -154,10 +158,12 @@ int main(int argc, char **argv) {
             gb_brain_set_input(&gb_in);
         }
 
+        unsigned int t_gb0 = of_time_us();
         if (state.rom_loaded) {
             gb_brain_run_frame(&state);
             mod_manager_on_frame(&state);
         }
+        state.perf_gb_ms = (uint16_t)((of_time_us() - t_gb0) / 1000u);
         state.frame_count++;
 
         renderer_begin_frame(RGB565(10, 14, 24));
@@ -169,10 +175,12 @@ int main(int argc, char **argv) {
                                state.snap.map_w > 0 &&
                                state.snap.map_h > 0;
 
+        unsigned int t_3d0 = of_time_us();
         mod_manager_on_render_3d(&state);
         if (voxel_3d_active) {
             r3d_end_scene();
         }
+        state.perf_3d_ms = (uint16_t)((of_time_us() - t_3d0) / 1000u);
 
         if (state.rom_loaded) {
             if (!voxel_3d_active) {
@@ -200,7 +208,24 @@ int main(int argc, char **argv) {
         }
 
         renderer_end_frame();
-        usleep(16600);
+
+        fps_frames++;
+        unsigned int now_ms = of_time_ms();
+        if (now_ms - fps_window_start >= 1000u) {
+            state.perf_fps = (uint16_t)fps_frames;
+            fps_frames = 0;
+            fps_window_start = now_ms;
+        }
+
+        /* Only sleep remaining budget on PC; Pocket paces naturally via vblank/work. */
+#ifdef OF_PC
+        unsigned int elapsed_us = of_time_us() - frame_start_us;
+        if (elapsed_us < 16667u) {
+            usleep(16667u - elapsed_us);
+        }
+#else
+        (void)frame_start_us;
+#endif
     }
 
     gb_brain_shutdown();

@@ -9,10 +9,15 @@
 #define R3D_FAR      600.0f
 #define R3D_DEG2RAD  0.01745329251994329577f
 
+#define R3D_SW_W     160
+#define R3D_SW_H     120
+
 #define R3D_SHADOW_W 8
 #define R3D_SHADOW_H 8
 #define R3D_SPRITE_W 8
 #define R3D_SPRITE_H 12
+
+typedef uint32_t __attribute__((__may_alias__)) r3d_u32_t;
 
 typedef struct {
     float x, y, z;
@@ -25,8 +30,24 @@ typedef struct {
     float u, v;
 } r3d_proj_vert_t;
 
-/* 16-bit depth buffer (smaller = closer, 0xFFFF = far clear). */
+typedef struct {
+    int32_t x, u, v;
+    int64_t z;
+    int32_t dx, du, dv;
+    int64_t dz;
+} r3d_left_edge_t;
+
+typedef struct {
+    int32_t x;
+    int32_t dx;
+} r3d_right_edge_t;
+
+/* 16-bit depth buffer for HW path (320x240, GEQUAL on 1/w depth, 0 = far). */
 static uint16_t s_zbuf[RENDER_W * RENDER_H];
+
+/* Half-res 160x120 software render target + linear Z-buffer (smaller = closer, 0xFFFF = far). */
+static uint16_t s_sw_fb[R3D_SW_W * R3D_SW_H] __attribute__((aligned(4)));
+static uint16_t s_sw_zbuf[R3D_SW_W * R3D_SW_H] __attribute__((aligned(4)));
 
 static uint16_t *s_fb     = NULL;
 static int       s_stride = RENDER_W;
@@ -96,6 +117,38 @@ static inline float r3d_edge_fn(float ax, float ay, float bx, float by, float px
     return (px - ax) * (by - ay) - (py - ay) * (bx - ax);
 }
 
+static inline int32_t r3d_float_to_fx16(float val) {
+    float s = val * 65536.0f;
+    if (s >= 2147483520.0f) {
+        return INT32_MAX;
+    }
+    if (s <= -2147483520.0f) {
+        return INT32_MIN;
+    }
+    return (int32_t)s;
+}
+
+static inline int64_t r3d_float_to_fx16_64(float val) {
+    float s = val * 16384.0f;
+    if (s >= 2147483520.0f) {
+        return (int64_t)INT32_MAX * 4;
+    }
+    if (s <= -2147483520.0f) {
+        return (int64_t)INT32_MIN * 4;
+    }
+    return (int64_t)((int32_t)s) * 4;
+}
+
+static inline float r3d_vert_z(const r3d_proj_vert_t *p, bool use_sw) {
+    float z = use_sw ? p->depth : (p->inv_w * 16384.0f);
+    if (z < 1.0f) {
+        z = 1.0f;
+    } else if (z > 65534.0f) {
+        z = 65534.0f;
+    }
+    return z;
+}
+
 static bool r3d_project_vert(const voxel_vert_t *in, r3d_proj_vert_t *out) {
     const float vx = s_view[0][0] * in->x + s_view[0][1] * in->y + s_view[0][2] * in->z + s_view[0][3];
     const float vy = s_view[1][0] * in->x + s_view[1][1] * in->y + s_view[1][2] * in->z + s_view[1][3];
@@ -114,8 +167,12 @@ static bool r3d_project_vert(const voxel_vert_t *in, r3d_proj_vert_t *out) {
     const float ndc_x = clip_x * inv_w;
     const float ndc_y = clip_y * inv_w;
 
-    out->sx = (ndc_x + 1.0f) * (0.5f * (float)RENDER_W);
-    out->sy = (1.0f - ndc_y) * (0.5f * (float)RENDER_H);
+    const bool use_sw = !renderer_has_hw_tri();
+    const float half_w = use_sw ? (0.5f * (float)R3D_SW_W) : (0.5f * (float)RENDER_W);
+    const float half_h = use_sw ? (0.5f * (float)R3D_SW_H) : (0.5f * (float)RENDER_H);
+
+    out->sx = (ndc_x + 1.0f) * half_w;
+    out->sy = (1.0f - ndc_y) * half_h;
 
     float depth_f = (clip_w - R3D_NEAR) * (65535.0f / (R3D_FAR - R3D_NEAR));
     if (depth_f < 0.0f) {
@@ -128,6 +185,154 @@ static bool r3d_project_vert(const voxel_vert_t *in, r3d_proj_vert_t *out) {
     out->u     = in->u;
     out->v     = in->v;
     return true;
+}
+
+static void r3d_setup_left_edge(r3d_left_edge_t *e,
+                                const r3d_proj_vert_t *va,
+                                const r3d_proj_vert_t *vb,
+                                float za, float zb,
+                                int y_clip_start) {
+    const float fdy = vb->sy - va->sy;
+    if (fdy > 1e-5f) {
+        const float inv_fdy = 1.0f / fdy;
+        const float dx_dy   = (vb->sx - va->sx) * inv_fdy;
+        const float du_dy   = (vb->u  - va->u ) * inv_fdy;
+        const float dv_dy   = (vb->v  - va->v ) * inv_fdy;
+        const float dz_dy   = (zb     - za    ) * inv_fdy;
+        const float pre     = ((float)y_clip_start + 0.5f) - va->sy;
+
+        e->x  = r3d_float_to_fx16(va->sx + pre * dx_dy);
+        e->u  = r3d_float_to_fx16(va->u  + pre * du_dy);
+        e->v  = r3d_float_to_fx16(va->v  + pre * dv_dy);
+        e->z  = r3d_float_to_fx16_64(za  + pre * dz_dy);
+        e->dx = r3d_float_to_fx16(dx_dy);
+        e->du = r3d_float_to_fx16(du_dy);
+        e->dv = r3d_float_to_fx16(dv_dy);
+        e->dz = r3d_float_to_fx16_64(dz_dy);
+    } else {
+        e->x  = r3d_float_to_fx16(0.5f * (va->sx + vb->sx));
+        e->u  = r3d_float_to_fx16(0.5f * (va->u  + vb->u ));
+        e->v  = r3d_float_to_fx16(0.5f * (va->v  + vb->v ));
+        e->z  = r3d_float_to_fx16_64(0.5f * (za + zb));
+        e->dx = 0;
+        e->du = 0;
+        e->dv = 0;
+        e->dz = 0;
+    }
+}
+
+static void r3d_setup_right_edge(r3d_right_edge_t *e,
+                                 const r3d_proj_vert_t *va,
+                                 const r3d_proj_vert_t *vb,
+                                 int y_clip_start) {
+    const float fdy = vb->sy - va->sy;
+    if (fdy > 1e-5f) {
+        const float dx_dy = (vb->sx - va->sx) / fdy;
+        const float pre   = ((float)y_clip_start + 0.5f) - va->sy;
+        e->x  = r3d_float_to_fx16(va->sx + pre * dx_dy);
+        e->dx = r3d_float_to_fx16(dx_dy);
+    } else {
+        e->x  = r3d_float_to_fx16(0.5f * (va->sx + vb->sx));
+        e->dx = 0;
+    }
+}
+
+/* Fast integer span loop for SW path with power-of-2 texture, opaque, identity shade. */
+static inline void r3d_span_sw_pot_id(uint16_t *fb_row, uint16_t *z_row,
+                                      int xl, int xr,
+                                      uint32_t z, int32_t dz_dx,
+                                      int32_t u, int32_t du_dx,
+                                      int32_t v, int32_t dv_dx,
+                                      const uint16_t *atlas_rgb565,
+                                      uint32_t u_mask, uint32_t v_mask,
+                                      int w_shift) {
+    for (int x = xl; x < xr; x++) {
+        const uint16_t d = (uint16_t)(z >> 16);
+        if (d < z_row[x]) {
+            const uint32_t tx = (uint32_t)(u >> 16) & u_mask;
+            const uint32_t ty = (uint32_t)(v >> 16) & v_mask;
+            z_row[x]  = d;
+            fb_row[x] = atlas_rgb565[(ty << w_shift) + tx];
+        }
+        z += (uint32_t)dz_dx;
+        u += du_dx;
+        v += dv_dx;
+    }
+}
+
+/* Fast integer span loop for SW path with power-of-2 texture, opaque, modulated shade. */
+static inline void r3d_span_sw_pot_mod(uint16_t *fb_row, uint16_t *z_row,
+                                       int xl, int xr,
+                                       uint32_t z, int32_t dz_dx,
+                                       int32_t u, int32_t du_dx,
+                                       int32_t v, int32_t dv_dx,
+                                       const uint16_t *atlas_rgb565,
+                                       uint32_t u_mask, uint32_t v_mask,
+                                       int w_shift,
+                                       uint32_t sr8, uint32_t sg8, uint32_t sb8) {
+    for (int x = xl; x < xr; x++) {
+        const uint16_t d = (uint16_t)(z >> 16);
+        if (d < z_row[x]) {
+            const uint32_t tx = (uint32_t)(u >> 16) & u_mask;
+            const uint32_t ty = (uint32_t)(v >> 16) & v_mask;
+            const uint16_t texel = atlas_rgb565[(ty << w_shift) + tx];
+            z_row[x]  = d;
+            fb_row[x] = r3d_modulate_rgb565(texel, sr8, sg8, sb8);
+        }
+        z += (uint32_t)dz_dx;
+        u += du_dx;
+        v += dv_dx;
+    }
+}
+
+/* General integer span loop for alpha-keyed sprites, non-POT textures, untextured, or HW billboards. */
+static inline void r3d_span_general(uint16_t *fb_row, uint16_t *z_row,
+                                    int xl, int xr,
+                                    uint32_t z, int32_t dz_dx,
+                                    int32_t u, int32_t du_dx,
+                                    int32_t v, int32_t dv_dx,
+                                    bool use_sw, bool has_tex, bool pot_tex,
+                                    bool alpha_key, bool identity_shade,
+                                    const uint16_t *atlas_rgb565,
+                                    int atlas_w, int atlas_h,
+                                    uint32_t u_mask, uint32_t v_mask,
+                                    uint16_t shade_rgb,
+                                    uint32_t sr8, uint32_t sg8, uint32_t sb8) {
+    for (int x = xl; x < xr; x++) {
+        const uint16_t d = (uint16_t)(z >> 16);
+        const bool z_pass = use_sw ? (d < z_row[x]) : (d >= z_row[x]);
+        if (z_pass) {
+            uint16_t out_col = shade_rgb;
+            bool write_px = true;
+            if (has_tex) {
+                int tx, ty;
+                if (pot_tex) {
+                    tx = (int)((uint32_t)(u >> 16) & u_mask);
+                    ty = (int)((uint32_t)(v >> 16) & v_mask);
+                } else {
+                    tx = u >> 16;
+                    ty = v >> 16;
+                    if (tx < 0) tx = 0;
+                    else if (tx >= atlas_w) tx = atlas_w - 1;
+                    if (ty < 0) ty = 0;
+                    else if (ty >= atlas_h) ty = atlas_h - 1;
+                }
+                const uint16_t texel = atlas_rgb565[ty * atlas_w + tx];
+                if (alpha_key && texel == 0u) {
+                    write_px = false;
+                } else {
+                    out_col = identity_shade ? texel : r3d_modulate_rgb565(texel, sr8, sg8, sb8);
+                }
+            }
+            if (write_px) {
+                z_row[x]  = d;
+                fb_row[x] = out_col;
+            }
+        }
+        z += (uint32_t)dz_dx;
+        u += du_dx;
+        v += dv_dx;
+    }
 }
 
 static void r3d_rasterize_tri(const r3d_proj_vert_t *p0,
@@ -147,148 +352,167 @@ static void r3d_rasterize_tri(const r3d_proj_vert_t *p0,
         return;
     }
 
-    float min_xf = p0->sx;
-    if (p1->sx < min_xf) min_xf = p1->sx;
-    if (p2->sx < min_xf) min_xf = p2->sx;
+    const bool use_sw = !renderer_has_hw_tri();
+    const int fb_w = use_sw ? R3D_SW_W : RENDER_W;
+    const int fb_h = use_sw ? R3D_SW_H : RENDER_H;
 
-    float max_xf = p0->sx;
-    if (p1->sx > max_xf) max_xf = p1->sx;
-    if (p2->sx > max_xf) max_xf = p2->sx;
-
-    float min_yf = p0->sy;
-    if (p1->sy < min_yf) min_yf = p1->sy;
-    if (p2->sy < min_yf) min_yf = p2->sy;
-
-    float max_yf = p0->sy;
-    if (p1->sy > max_yf) max_yf = p1->sy;
-    if (p2->sy > max_yf) max_yf = p2->sy;
-
-    int min_x = (int)floorf(min_xf);
-    int max_x = (int)ceilf(max_xf);
-    int min_y = (int)floorf(min_yf);
-    int max_y = (int)ceilf(max_yf);
-
-    if (min_x < 0) min_x = 0;
-    if (min_y < 0) min_y = 0;
-    if (max_x >= RENDER_W) max_x = RENDER_W - 1;
-    if (max_y >= RENDER_H) max_y = RENDER_H - 1;
-
-    if (min_x > max_x || min_y > max_y) {
+    if ((p0->sx < 0.0f && p1->sx < 0.0f && p2->sx < 0.0f) ||
+        (p0->sx >= (float)fb_w && p1->sx >= (float)fb_w && p2->sx >= (float)fb_w) ||
+        (p0->sy < 0.0f && p1->sy < 0.0f && p2->sy < 0.0f) ||
+        (p0->sy >= (float)fb_h && p1->sy >= (float)fb_h && p2->sy >= (float)fb_h)) {
         return;
     }
 
+    const float zp0 = r3d_vert_z(p0, use_sw);
+    const float zp1 = r3d_vert_z(p1, use_sw);
+    const float zp2 = r3d_vert_z(p2, use_sw);
+
+    /* Constant per-triangle horizontal gradients in 16.16 fixed-point. */
     const float inv_area = 1.0f / area;
-
-    /* Normalized barycentric steps per pixel (+1 X, +1 Y). */
     const float db0_dx = (p2->sy - p1->sy) * inv_area;
-    const float db0_dy = (p1->sx - p2->sx) * inv_area;
     const float db1_dx = (p0->sy - p2->sy) * inv_area;
-    const float db1_dy = (p2->sx - p0->sx) * inv_area;
     const float db2_dx = (p1->sy - p0->sy) * inv_area;
-    const float db2_dy = (p0->sx - p1->sx) * inv_area;
 
-    const float start_px = (float)min_x + 0.5f;
-    const float start_py = (float)min_y + 0.5f;
+    const int32_t du_dx = r3d_float_to_fx16(p0->u * db0_dx + p1->u * db1_dx + p2->u * db2_dx);
+    const int32_t dv_dx = r3d_float_to_fx16(p0->v * db0_dx + p1->v * db1_dx + p2->v * db2_dx);
+    const int32_t dz_dx = r3d_float_to_fx16(zp0   * db0_dx + zp1   * db1_dx + zp2   * db2_dx);
 
-    float b0_row = r3d_edge_fn(p1->sx, p1->sy, p2->sx, p2->sy, start_px, start_py) * inv_area;
-    float b1_row = r3d_edge_fn(p2->sx, p2->sy, p0->sx, p0->sy, start_px, start_py) * inv_area;
-    float b2_row = r3d_edge_fn(p0->sx, p0->sy, p1->sx, p1->sy, start_px, start_py) * inv_area;
+    /* Sort projected vertices by integer scanline Y (breaking ties by sy). */
+    const r3d_proj_vert_t *v0 = p0, *v1 = p1, *v2 = p2;
+    float vz0 = zp0, vz1 = zp1, vz2 = zp2;
+    if (v0->sy > v1->sy) {
+        const r3d_proj_vert_t *tv = v0; v0 = v1; v1 = tv;
+        float tz = vz0; vz0 = vz1; vz1 = tz;
+    }
+    if (v1->sy > v2->sy) {
+        const r3d_proj_vert_t *tv = v1; v1 = v2; v2 = tv;
+        float tz = vz1; vz1 = vz2; vz2 = tz;
+    }
+    if (v0->sy > v1->sy) {
+        const r3d_proj_vert_t *tv = v0; v0 = v1; v1 = tv;
+        float tz = vz0; vz0 = vz1; vz1 = tz;
+    }
+
+    const int y0 = (int)ceilf(v0->sy - 0.5f);
+    const int y1 = (int)ceilf(v1->sy - 0.5f);
+    const int y2 = (int)ceilf(v2->sy - 0.5f);
+    if (y0 >= fb_h || y2 <= 0 || y0 >= y2) {
+        return;
+    }
+
+    const bool mid_is_left = (r3d_edge_fn(v0->sx, v0->sy, v1->sx, v1->sy, v2->sx, v2->sy) > 0.0f);
 
     const bool has_tex = (atlas_rgb565 != NULL && atlas_w > 0 && atlas_h > 0);
+    const bool pot_tex = has_tex &&
+                         ((atlas_w & (atlas_w - 1)) == 0) &&
+                         ((atlas_h & (atlas_h - 1)) == 0);
+    const uint32_t u_mask = (uint32_t)(atlas_w - 1);
+    const uint32_t v_mask = (uint32_t)(atlas_h - 1);
+    int w_shift = 0;
+    if (pot_tex) {
+        int w = atlas_w;
+        while (w > 1) {
+            w >>= 1;
+            w_shift++;
+        }
+    }
+
     const bool identity_shade = (shade_rgb == 0xFFFFu);
-    const uint32_t sr8 = (((uint32_t)((shade_rgb >> 11) & 0x1Fu)) * 256u + 15u) / 31u;
-    const uint32_t sg8 = (((uint32_t)((shade_rgb >> 5)  & 0x3Fu)) * 256u + 31u) / 63u;
-    const uint32_t sb8 = (((uint32_t)( shade_rgb        & 0x1Fu)) * 256u + 15u) / 31u;
+    const uint32_t sr8 = identity_shade ? 256u : ((((uint32_t)((shade_rgb >> 11) & 0x1Fu)) * 256u + 15u) / 31u);
+    const uint32_t sg8 = identity_shade ? 256u : ((((uint32_t)((shade_rgb >> 5)  & 0x3Fu)) * 256u + 31u) / 63u);
+    const uint32_t sb8 = identity_shade ? 256u : ((((uint32_t)( shade_rgb        & 0x1Fu)) * 256u + 15u) / 31u);
+    const bool fast_sw_pot = (use_sw && has_tex && pot_tex && !alpha_key);
 
-    const float edge_eps = -1e-4f;
-    const float z0  = p0->depth;
-    const float z1  = p1->depth;
-    const float z2  = p2->depth;
-    const float iw0 = p0->inv_w;
-    const float iw1 = p1->inv_w;
-    const float iw2 = p2->inv_w;
-    const float u0  = p0->u;
-    const float u1  = p1->u;
-    const float u2  = p2->u;
-    const float v0  = p0->v;
-    const float v1  = p1->v;
-    const float v2  = p2->v;
+    uint16_t * const fb_base   = use_sw ? s_sw_fb   : s_fb;
+    uint16_t * const zbuf_base = use_sw ? s_sw_zbuf : s_zbuf;
+    const int        fb_stride = use_sw ? R3D_SW_W  : s_stride;
+    const int        z_stride  = use_sw ? R3D_SW_W  : RENDER_W;
 
-    const bool use_sw_z = !renderer_has_hw_tri();
+    r3d_left_edge_t  left;
+    r3d_right_edge_t right;
+    const int y_long_start = (y0 < 0) ? 0 : y0;
+    if (mid_is_left) {
+        r3d_setup_right_edge(&right, v0, v2, y_long_start);
+    } else {
+        r3d_setup_left_edge(&left, v0, v2, vz0, vz2, y_long_start);
+    }
 
-    for (int y = min_y; y <= max_y; y++) {
-        float b0 = b0_row;
-        float b1 = b1_row;
-        float b2 = b2_row;
-
-        uint16_t *fb_row = s_fb + (uint32_t)y * (uint32_t)s_stride;
-        uint16_t *z_row  = s_zbuf + (uint32_t)y * (uint32_t)RENDER_W;
-        bool entered = false;
-
-        for (int x = min_x; x <= max_x; x++) {
-            if (b0 >= edge_eps && b1 >= edge_eps && b2 >= edge_eps) {
-                entered = true;
-
-                uint16_t depth;
-                bool z_pass;
-                if (use_sw_z) {
-                    float zf = b0 * z0 + b1 * z1 + b2 * z2;
-                    if (zf < 0.0f) {
-                        zf = 0.0f;
-                    } else if (zf > 65535.0f) {
-                        zf = 65535.0f;
-                    }
-                    depth = (uint16_t)(zf + 0.5f);
-                    z_pass = (depth < z_row[x]);
-                } else {
-                    float inv_w_f = b0 * iw0 + b1 * iw1 + b2 * iw2;
-                    float hw_zf = inv_w_f * 16384.0f;
-                    if (hw_zf < 1.0f) {
-                        hw_zf = 1.0f;
-                    } else if (hw_zf > 65535.0f) {
-                        hw_zf = 65535.0f;
-                    }
-                    depth = (uint16_t)hw_zf;
-                    z_pass = (depth >= z_row[x]);
-                }
-
-                if (z_pass) {
-                    uint16_t out_col = shade_rgb;
-
-                    if (has_tex) {
-                        int tx = (int)(b0 * u0 + b1 * u1 + b2 * u2);
-                        int ty = (int)(b0 * v0 + b1 * v1 + b2 * v2);
-                        if (tx < 0) tx = 0;
-                        else if (tx >= atlas_w) tx = atlas_w - 1;
-                        if (ty < 0) ty = 0;
-                        else if (ty >= atlas_h) ty = atlas_h - 1;
-
-                        const uint16_t texel = atlas_rgb565[ty * atlas_w + tx];
-                        if (alpha_key && texel == 0u) {
-                            b0 += db0_dx;
-                            b1 += db1_dx;
-                            b2 += db2_dx;
-                            continue;
-                        }
-                        out_col = identity_shade ? texel : r3d_modulate_rgb565(texel, sr8, sg8, sb8);
-                    }
-
-                    z_row[x] = depth;
-                    fb_row[x] = out_col;
-                }
-            } else if (entered) {
-                /* Triangles are convex; once we exit along this scanline, we cannot re-enter. */
-                break;
+    for (int half = 0; half < 2; half++) {
+        int ys, ye;
+        if (half == 0) {
+            ys = (y0 < 0) ? 0 : y0;
+            ye = (y1 > fb_h) ? fb_h : y1;
+            if (ys >= ye) {
+                continue;
             }
-
-            b0 += db0_dx;
-            b1 += db1_dx;
-            b2 += db2_dx;
+            if (mid_is_left) {
+                r3d_setup_left_edge(&left, v0, v1, vz0, vz1, ys);
+            } else {
+                r3d_setup_right_edge(&right, v0, v1, ys);
+            }
+        } else {
+            ys = (y1 < 0) ? 0 : y1;
+            ye = (y2 > fb_h) ? fb_h : y2;
+            if (ys >= ye) {
+                continue;
+            }
+            if (mid_is_left) {
+                r3d_setup_left_edge(&left, v1, v2, vz1, vz2, ys);
+            } else {
+                r3d_setup_right_edge(&right, v1, v2, ys);
+            }
         }
 
-        b0_row += db0_dy;
-        b1_row += db1_dy;
-        b2_row += db2_dy;
+        uint16_t *fb_row = fb_base   + (uint32_t)ys * (uint32_t)fb_stride;
+        uint16_t *z_row  = zbuf_base + (uint32_t)ys * (uint32_t)z_stride;
+
+        for (int y = ys; y < ye; y++) {
+            int xl = (left.x  >> 16) + (((left.x  & 0xFFFF) > 0x8000) ? 1 : 0);
+            int xr = (right.x >> 16) + (((right.x & 0xFFFF) > 0x8000) ? 1 : 0);
+
+            if (xl < 0) {
+                xl = 0;
+            }
+            if (xr > fb_w) {
+                xr = fb_w;
+            }
+
+            if (xl < xr) {
+                const int32_t dx_sub = ((xl << 16) + 0x8000) - left.x;
+                const int32_t u = left.u + (int32_t)(((int64_t)du_dx * dx_sub) >> 16);
+                const int32_t v = left.v + (int32_t)(((int64_t)dv_dx * dx_sub) >> 16);
+                int64_t z64 = left.z + (((int64_t)dz_dx * dx_sub) >> 16);
+                if (z64 < 0x00010000LL) {
+                    z64 = 0x00010000LL;
+                } else if (z64 > 0xFFFE0000LL) {
+                    z64 = 0xFFFE0000LL;
+                }
+                const uint32_t z = (uint32_t)z64;
+
+                if (fast_sw_pot) {
+                    if (identity_shade) {
+                        r3d_span_sw_pot_id(fb_row, z_row, xl, xr, z, dz_dx, u, du_dx, v, dv_dx,
+                                           atlas_rgb565, u_mask, v_mask, w_shift);
+                    } else {
+                        r3d_span_sw_pot_mod(fb_row, z_row, xl, xr, z, dz_dx, u, du_dx, v, dv_dx,
+                                            atlas_rgb565, u_mask, v_mask, w_shift, sr8, sg8, sb8);
+                    }
+                } else {
+                    r3d_span_general(fb_row, z_row, xl, xr, z, dz_dx, u, du_dx, v, dv_dx,
+                                     use_sw, has_tex, pot_tex, alpha_key, identity_shade,
+                                     atlas_rgb565, atlas_w, atlas_h, u_mask, v_mask,
+                                     shade_rgb, sr8, sg8, sb8);
+                }
+            }
+
+            left.x  += left.dx;
+            left.u  += left.du;
+            left.v  += left.dv;
+            left.z  += left.dz;
+            right.x += right.dx;
+            fb_row  += fb_stride;
+            z_row   += z_stride;
+        }
     }
 }
 
@@ -312,7 +536,8 @@ static void r3d_submit_tri(const voxel_tri_t *tri,
 }
 
 void r3d_init(void) {
-    memset(s_zbuf, 0xFF, sizeof(s_zbuf));
+    memset(s_zbuf, renderer_has_hw_tri() ? 0 : 0xFF, sizeof(s_zbuf));
+    memset(s_sw_zbuf, 0xFF, sizeof(s_sw_zbuf));
     s_fb     = NULL;
     s_stride = RENDER_W;
 
@@ -328,13 +553,20 @@ void r3d_init(void) {
 }
 
 void r3d_begin_scene(uint16_t sky_color) {
-    /* Hardware Z_TEST_WRITE tests GEQUAL on 1/w depth (0 = far); SW tests < on linear depth (0xFFFF = far). */
-    memset(s_zbuf, renderer_has_hw_tri() ? 0 : 0xFF, sizeof(s_zbuf));
+    const bool hw_tri = renderer_has_hw_tri();
 
     int stride = RENDER_W;
     uint16_t *fb = renderer_get_draw_fb(&stride);
     s_fb     = fb;
     s_stride = (stride >= RENDER_W) ? stride : RENDER_W;
+
+    if (!hw_tri) {
+        /* SW tests < on linear depth (0xFFFF = far). */
+        memset(s_sw_zbuf, 0xFF, sizeof(s_sw_zbuf));
+    } else {
+        /* Hardware Z_TEST_WRITE tests GEQUAL on 1/w depth (0 = far). */
+        memset(s_zbuf, 0, sizeof(s_zbuf));
+    }
 
     if (s_fb == NULL) {
         return;
@@ -344,20 +576,40 @@ void r3d_begin_scene(uint16_t sky_color) {
     const uint32_t base_g = (uint32_t)((sky_color >> 5)  & 0x3Fu);
     const uint32_t base_b = (uint32_t)( sky_color        & 0x1Fu);
 
-    /* Subtle vertical atmospheric gradient from slightly deeper zenith to horizon sky_color. */
-    for (int y = 0; y < RENDER_H; y++) {
-        const uint32_t scale = 216u + (uint32_t)((y * 56) / (RENDER_H - 1));
-        uint32_t r = (base_r * scale) >> 8;
-        uint32_t g = (base_g * scale) >> 8;
-        uint32_t b = (base_b * scale) >> 8;
-        if (r > 31u) r = 31u;
-        if (g > 63u) g = 63u;
-        if (b > 31u) b = 31u;
+    if (!hw_tri) {
+        /* Fill half-res 160x120 SW buffer with sky gradient via 32-bit paired pixel writes. */
+        for (int y = 0; y < R3D_SW_H; y++) {
+            const uint32_t scale = 216u + (uint32_t)((y * 56) / (R3D_SW_H - 1));
+            uint32_t r = (base_r * scale) >> 8;
+            uint32_t g = (base_g * scale) >> 8;
+            uint32_t b = (base_b * scale) >> 8;
+            if (r > 31u) r = 31u;
+            if (g > 63u) g = 63u;
+            if (b > 31u) b = 31u;
 
-        const uint16_t row_col = (uint16_t)((r << 11) | (g << 5) | b);
-        uint16_t *row = s_fb + (uint32_t)y * (uint32_t)s_stride;
-        for (int x = 0; x < RENDER_W; x++) {
-            row[x] = row_col;
+            const uint16_t row_col = (uint16_t)((r << 11) | (g << 5) | b);
+            const uint32_t p2 = ((uint32_t)row_col << 16) | row_col;
+            r3d_u32_t *row32 = (r3d_u32_t *)(s_sw_fb + (uint32_t)y * R3D_SW_W);
+            for (int x = 0; x < R3D_SW_W / 2; x++) {
+                row32[x] = p2;
+            }
+        }
+    } else {
+        /* Subtle vertical atmospheric gradient on full 320x240 buffer for HW path. */
+        for (int y = 0; y < RENDER_H; y++) {
+            const uint32_t scale = 216u + (uint32_t)((y * 56) / (RENDER_H - 1));
+            uint32_t r = (base_r * scale) >> 8;
+            uint32_t g = (base_g * scale) >> 8;
+            uint32_t b = (base_b * scale) >> 8;
+            if (r > 31u) r = 31u;
+            if (g > 63u) g = 63u;
+            if (b > 31u) b = 31u;
+
+            const uint16_t row_col = (uint16_t)((r << 11) | (g << 5) | b);
+            uint16_t *row = s_fb + (uint32_t)y * (uint32_t)s_stride;
+            for (int x = 0; x < RENDER_W; x++) {
+                row[x] = row_col;
+            }
         }
     }
 }
@@ -545,15 +797,19 @@ void r3d_draw_sprite_billboard(float wx, float wy, float wz, float width, float 
         const float sy_ground = wy + 0.25f;
 
         /* CCW outward (+Y normal) ground quad: NW -> SW -> SE -> NE. */
+        const float su_min = 0.01f;
+        const float sv_min = 0.01f;
+        const float su_max = (float)R3D_SHADOW_W - 0.01f;
+        const float sv_max = (float)R3D_SHADOW_H - 0.01f;
         voxel_tri_t s0 = {{
-            { wx - hw, sy_ground, wz - hd, 0.0f,               0.0f,               0xFFFFu },
-            { wx - hw, sy_ground, wz + hd, 0.0f,               (float)R3D_SHADOW_H, 0xFFFFu },
-            { wx + hw, sy_ground, wz + hd, (float)R3D_SHADOW_W, (float)R3D_SHADOW_H, 0xFFFFu }
+            { wx - hw, sy_ground, wz - hd, su_min, sv_min, 0xFFFFu },
+            { wx - hw, sy_ground, wz + hd, su_min, sv_max, 0xFFFFu },
+            { wx + hw, sy_ground, wz + hd, su_max, sv_max, 0xFFFFu }
         }};
         voxel_tri_t s1 = {{
-            { wx - hw, sy_ground, wz - hd, 0.0f,               0.0f,               0xFFFFu },
-            { wx + hw, sy_ground, wz + hd, (float)R3D_SHADOW_W, (float)R3D_SHADOW_H, 0xFFFFu },
-            { wx + hw, sy_ground, wz - hd, (float)R3D_SHADOW_W, 0.0f,               0xFFFFu }
+            { wx - hw, sy_ground, wz - hd, su_min, sv_min, 0xFFFFu },
+            { wx + hw, sy_ground, wz + hd, su_max, sv_max, 0xFFFFu },
+            { wx + hw, sy_ground, wz - hd, su_max, sv_min, 0xFFFFu }
         }};
 
         r3d_submit_tri(&s0, shadow_tex, R3D_SHADOW_W, R3D_SHADOW_H, true);
@@ -591,14 +847,16 @@ void r3d_draw_sprite_billboard(float wx, float wy, float wz, float width, float 
     const float hx = up_x * height;
     const float hy = up_y * height;
     const float hz = up_z * height;
-    const float u_max = (float)tex_w;
-    const float v_max = (float)tex_h;
+    const float u_min = 0.01f;
+    const float v_min = 0.01f;
+    const float u_max = (float)tex_w - 0.01f;
+    const float v_max = (float)tex_h - 0.01f;
 
     /* Quad corners: TL -> BL -> BR -> TR (CCW facing camera). */
-    const voxel_vert_t v_tl = { wx - rx + hx, wy + hy, wz - rz + hz, 0.0f,  0.0f,  0xFFFFu };
-    const voxel_vert_t v_bl = { wx - rx,      wy,      wz - rz,      0.0f,  v_max, 0xFFFFu };
+    const voxel_vert_t v_tl = { wx - rx + hx, wy + hy, wz - rz + hz, u_min, v_min, 0xFFFFu };
+    const voxel_vert_t v_bl = { wx - rx,      wy,      wz - rz,      u_min, v_max, 0xFFFFu };
     const voxel_vert_t v_br = { wx + rx,      wy,      wz + rz,      u_max, v_max, 0xFFFFu };
-    const voxel_vert_t v_tr = { wx + rx + hx, wy + hy, wz + rz + hz, u_max, 0.0f,  0xFFFFu };
+    const voxel_vert_t v_tr = { wx + rx + hx, wy + hy, wz + rz + hz, u_max, v_min, 0xFFFFu };
 
     voxel_tri_t t0 = {{ v_tl, v_bl, v_br }};
     voxel_tri_t t1 = {{ v_tl, v_br, v_tr }};
@@ -639,5 +897,34 @@ void r3d_draw_billboard(float wx, float wy, float wz, float width, float height,
 }
 
 void r3d_end_scene(void) {
+    if (!renderer_has_hw_tri() && s_fb != NULL) {
+        if ((((uintptr_t)s_fb & 3u) == 0u) && ((s_stride & 1) == 0)) {
+            for (int y = 0; y < R3D_SW_H; y++) {
+                const uint16_t *src = s_sw_fb + (uint32_t)y * R3D_SW_W;
+                r3d_u32_t *dst0 = (r3d_u32_t *)(s_fb + (uint32_t)(y * 2)     * (uint32_t)s_stride);
+                r3d_u32_t *dst1 = (r3d_u32_t *)(s_fb + (uint32_t)(y * 2 + 1) * (uint32_t)s_stride);
+                for (int x = 0; x < R3D_SW_W; x++) {
+                    const uint16_t c  = src[x];
+                    const uint32_t p2 = ((uint32_t)c << 16) | c;
+                    dst0[x] = p2;
+                    dst1[x] = p2;
+                }
+            }
+        } else {
+            for (int y = 0; y < R3D_SW_H; y++) {
+                const uint16_t *src = s_sw_fb + (uint32_t)y * R3D_SW_W;
+                uint16_t *dst0 = s_fb + (uint32_t)(y * 2)     * (uint32_t)s_stride;
+                uint16_t *dst1 = s_fb + (uint32_t)(y * 2 + 1) * (uint32_t)s_stride;
+                for (int x = 0; x < R3D_SW_W; x++) {
+                    const uint16_t c = src[x];
+                    const int dx = x * 2;
+                    dst0[dx]     = c;
+                    dst0[dx + 1] = c;
+                    dst1[dx]     = c;
+                    dst1[dx + 1] = c;
+                }
+            }
+        }
+    }
     s_fb = NULL;
 }

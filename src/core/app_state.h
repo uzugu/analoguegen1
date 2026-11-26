@@ -64,6 +64,10 @@ typedef struct {
     game_snapshot_t snap;
     /* Camera pitch rung for Dramatic Shape Voxel mod: 0=OFF, 15, 35, 50, 75 */
     int             voxel_pitch_deg;
+    /* Live frame performance counters */
+    uint16_t        perf_fps;
+    uint16_t        perf_gb_ms;
+    uint16_t        perf_3d_ms;
 } app_state_t;
 
 #endif /* APP_STATE_H */

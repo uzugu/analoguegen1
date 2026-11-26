@@ -86,12 +86,11 @@ static void mod_voxel_on_frame(app_state_t *state) {
         return;
     }
 
-    /* Rebuild voxel mesh whenever the player moves, changes map, or every 30 frames (animated tiles). */
+    /* Rebuild voxel mesh only when the player moves or changes map (zero idle rebuild cost). */
     bool dirty = !s_mesh_ready ||
                  s_last_map != state->snap.cur_map ||
                  s_last_px  != state->snap.player_x ||
-                 s_last_py  != state->snap.player_y ||
-                 (state->frame_count % 30u) == 0u;
+                 s_last_py  != state->snap.player_y;
 
     if (dirty) {
         if (gb_map_extract(state, &s_map_view)) {
@@ -208,17 +207,18 @@ static void mod_voxel_on_render_hud(const app_state_t *state) {
         snprintf(line, sizeof(line), "VOXEL 3D | PITCH:%2d | WAITING FOR ROM",
                  state->voxel_pitch_deg);
     } else if (s_mesh_ready && state->voxel_pitch_deg > 0 && state->snap.in_battle == 0) {
-        snprintf(line, sizeof(line), "3D MAP:%02X XY:%u,%u %s P:%d T:%d",
-                 (unsigned)state->snap.cur_map,
-                 (unsigned)state->snap.player_x,
-                 (unsigned)state->snap.player_y,
-                 dir_name(state->snap.facing_dir),
+        snprintf(line, sizeof(line), "3D FPS:%2u GB:%u 3D:%u P:%d T:%d %s",
+                 (unsigned)state->perf_fps,
+                 (unsigned)state->perf_gb_ms,
+                 (unsigned)state->perf_3d_ms,
                  state->voxel_pitch_deg,
-                 s_mesh.tri_count);
+                 s_mesh.tri_count,
+                 dir_name(state->snap.facing_dir));
     } else {
-        snprintf(line, sizeof(line), "2D MAP:%02X TS:%02X XY:%u,%u PITCH:%d",
+        snprintf(line, sizeof(line), "2D FPS:%2u GB:%u MAP:%02X XY:%u,%u P:%d",
+                 (unsigned)state->perf_fps,
+                 (unsigned)state->perf_gb_ms,
                  (unsigned)state->snap.cur_map,
-                 (unsigned)state->snap.tileset,
                  (unsigned)state->snap.player_x,
                  (unsigned)state->snap.player_y,
                  state->voxel_pitch_deg);
