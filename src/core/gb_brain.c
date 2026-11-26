@@ -300,9 +300,6 @@ void gb_brain_run_frame(app_state_t *state)
     uint8_t dv_atk_def;
     uint8_t dv_spd_spc;
     uint8_t box_cnt;
-    uint8_t row12_col0;
-    uint8_t row12_col1;
-    uint8_t start_border;
     unsigned int i;
     unsigned int s;
 
@@ -360,11 +357,26 @@ void gb_brain_run_frame(app_state_t *state)
         state->snap.box_species[i] = gb_brain_read8((uint16_t)(GB_ADDR_BOX_SPECIES + i));
     }
 
-    row12_col0 = gb_brain_read8((uint16_t)(GB_ADDR_TILEMAP + (12U * 20U)));
-    row12_col1 = gb_brain_read8((uint16_t)(GB_ADDR_TILEMAP + (12U * 20U) + 1U));
-    start_border = gb_brain_read8((uint16_t)(GB_ADDR_TILEMAP + 10U));
-    state->snap.dialogue_open = (row12_col0 == 0x79U || row12_col0 == 0x7AU ||
-                                 row12_col1 == 0x7AU || start_border == 0x79U);
+    {
+        uint8_t top_left    = gb_brain_read8(GB_ADDR_TILEMAP);
+        uint8_t top_mid     = gb_brain_read8((uint16_t)(GB_ADDR_TILEMAP + 1U));
+        uint8_t row12_col0  = gb_brain_read8((uint16_t)(GB_ADDR_TILEMAP + (12U * 20U)));
+        uint8_t row12_col1  = gb_brain_read8((uint16_t)(GB_ADDR_TILEMAP + (12U * 20U) + 1U));
+        uint8_t start_tl    = gb_brain_read8((uint16_t)(GB_ADDR_TILEMAP + 10U));
+        uint8_t start_tr    = gb_brain_read8((uint16_t)(GB_ADDR_TILEMAP + 19U));
+        uint8_t row1_col11  = gb_brain_read8((uint16_t)(GB_ADDR_TILEMAP + 20U + 11U));
+
+        /* Full-screen menus (Party, Bag, Pokedex, Options, Save, PC) draw borders/blank tiles at (0,0) */
+        if (top_left == 0x79U || (top_left == 0x7FU && top_mid == 0x7FU)) {
+            state->snap.ui_overlay = (uint8_t)UI_OVERLAY_FULLSCREEN_2D;
+        } else if (start_tl == 0x79U && start_tr == 0x7BU && row1_col11 != 0x00U) {
+            state->snap.ui_overlay = (uint8_t)UI_OVERLAY_START_MENU;
+        } else if (row12_col0 == 0x79U && row12_col1 == 0x7AU) {
+            state->snap.ui_overlay = (uint8_t)UI_OVERLAY_DIALOGUE;
+        } else {
+            state->snap.ui_overlay = (uint8_t)UI_OVERLAY_NONE;
+        }
+    }
 
     for (s = 0U; s < APP_MAX_NPCS; s++) {
         uint16_t off = (uint16_t)((s + 1U) * 16U);

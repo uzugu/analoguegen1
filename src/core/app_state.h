@@ -22,6 +22,13 @@ typedef struct {
     uint8_t facing_dir;
 } npc_snap_t;
 
+typedef enum {
+    UI_OVERLAY_NONE = 0,
+    UI_OVERLAY_DIALOGUE,
+    UI_OVERLAY_START_MENU,
+    UI_OVERLAY_FULLSCREEN_2D
+} ui_overlay_mode_t;
+
 typedef struct {
     uint8_t    cur_map;
     uint8_t    tileset;
@@ -36,7 +43,7 @@ typedef struct {
     int8_t     walk_dx;
     int8_t     walk_dy;
     uint8_t    in_battle;      /* 0=overworld, 1=wild, 2=trainer */
-    bool       dialogue_open;  /* true when GB text box / start menu is visible */
+    uint8_t    ui_overlay;     /* ui_overlay_mode_t */
     uint8_t    party_count;
     uint8_t    lead_species;
     uint8_t    party_species[6];

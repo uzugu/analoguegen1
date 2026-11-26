@@ -166,6 +166,7 @@ int main(int argc, char **argv) {
                                mod_manager_is_enabled("dramatic_shape") &&
                                state.voxel_pitch_deg > 0 &&
                                state.snap.in_battle == 0 &&
+                               state.snap.ui_overlay != (uint8_t)UI_OVERLAY_FULLSCREEN_2D &&
                                state.snap.map_w > 0 &&
                                state.snap.map_h > 0;
 
@@ -180,7 +181,11 @@ int main(int argc, char **argv) {
             if (!voxel_3d_active) {
                 /* Aspect-preserving full-height 2D GB LCD: 266x240 centered (10:9) */
                 renderer_blit_gb_lcd_scaled(gb_brain_get_lcd_rgb565(), 27, 0, 266, 240);
-            } else if (state.snap.dialogue_open) {
+            } else if (state.snap.ui_overlay == (uint8_t)UI_OVERLAY_START_MENU) {
+                /* Composite right-side Start Menu (80x112) cleanly over the 3D scene */
+                renderer_draw_rect(RENDER_W - 88 - 1, 7, 82, 114, RGB565(220, 228, 240));
+                renderer_blit_gb_subrect(gb_brain_get_lcd_rgb565(), 80, 0, 80, 112, RENDER_W - 88, 8);
+            } else if (state.snap.ui_overlay == (uint8_t)UI_OVERLAY_DIALOGUE) {
                 /* Composite authentic GB bottom dialogue box (rows 96..143) over 3D scene */
                 renderer_draw_rect(gb_dst_x - 1, 187, GB_LCD_W + 2, 50, RGB565(220, 228, 240));
                 renderer_blit_gb_subrect(gb_brain_get_lcd_rgb565(), 0, 96, GB_LCD_W, 48, gb_dst_x, 188);

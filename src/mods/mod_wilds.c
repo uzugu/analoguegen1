@@ -135,7 +135,9 @@ static void wilds_on_frame(app_state_t *state) {
         return;
     }
 
-    if (state->snap.in_battle != 0) {
+    if (state->snap.in_battle != 0 || state->snap.tileset != 0) {
+        wilds_clear_spawns();
+        s_last_map = 0xFFu;
         return;
     }
 
@@ -278,9 +280,9 @@ void mod_wilds_register(void) {
         .id              = "wilds_of_kanto",
         .name            = "Wilds of Kanto",
         .category        = "MECHANIC",
-        .description     = "Visible wandering wild Pokemon in 3D overworld",
-        .enabled         = true,
-        .default_enabled = true,
+        .description     = "Visible wandering wild Pokemon outdoors (Overworld)",
+        .enabled         = false,
+        .default_enabled = false,
         .init            = wilds_init,
         .on_frame        = wilds_on_frame,
         .on_render_3d    = wilds_on_render_3d,
