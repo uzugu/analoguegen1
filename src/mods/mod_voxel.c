@@ -18,16 +18,6 @@ static uint8_t       s_last_py      = 0xFFu;
 static uint8_t       s_last_daytime = 0xFFu;
 static int           s_vram_refresh = 0;
 
-static const char *dir_name(uint8_t facing_dir) {
-    switch (facing_dir) {
-        case 0:  return "S";
-        case 4:  return "N";
-        case 8:  return "W";
-        case 12: return "E";
-        default: return "?";
-    }
-}
-
 static const char *daytime_name(uint8_t daytime_mode) {
     switch (daytime_mode) {
         case 1u:  return "DUSK";
@@ -137,35 +127,53 @@ static void battle_mon_colors(uint8_t type1, uint8_t type2,
  */
 static bool decode_shadow_oam_group_16x16(uint16_t base_addr,
                                           uint16_t out_16x16[256],
-                                          uint16_t tint_shade1, uint16_t tint_shade2) {
-    static const uint8_t quad_ox[4] = { 0u, 8u, 0u, 8u };
-    static const uint8_t quad_oy[4] = { 0u, 0u, 8u, 8u };
+                                          uint16_t tint_shade1, uint16_t tint_shade2,
+                                          uint8_t *out_min_x, uint8_t *out_min_y) {
     const uint16_t outline_col = RGB565(24, 28, 36);
     bool has_pixels = false;
+    uint8_t sy[4], sx[4], tile[4], flags[4];
+    uint8_t min_x = 255u, min_y = 255u;
 
     for (int i = 0; i < 256; i++) {
         out_16x16[i] = 0u;
     }
 
-    /* Verify entry 0 of the group is on-screen (Y in 1..159). */
-    const uint8_t oam0_y = gb_brain_read8(base_addr);
-    if (oam0_y == 0u || oam0_y >= 160u) {
+    for (int q = 0; q < 4; q++) {
+        const uint16_t a = (uint16_t)(base_addr + (uint16_t)(q * 4));
+        sy[q]    = gb_brain_read8(a);
+        sx[q]    = gb_brain_read8((uint16_t)(a + 1u));
+        tile[q]  = gb_brain_read8((uint16_t)(a + 2u));
+        flags[q] = gb_brain_read8((uint16_t)(a + 3u));
+        if (sy[q] == 0u || sy[q] >= 160u) {
+            return false;
+        }
+        if (sx[q] < min_x) min_x = sx[q];
+        if (sy[q] < min_y) min_y = sy[q];
+    }
+
+    /* Validate all 4 entries form a 16x16 (2x2 of 8x8) block in ANY quadrant order (handles X-flip swaps!). */
+    uint8_t quad_mask = 0u;
+    for (int q = 0; q < 4; q++) {
+        int ox = (int)sx[q] - (int)min_x;
+        int oy = (int)sy[q] - (int)min_y;
+        if ((ox != 0 && ox != 8) || (oy != 0 && oy != 8)) {
+            return false;
+        }
+        quad_mask |= (uint8_t)(1u << ((oy ? 2 : 0) | (ox ? 1 : 0)));
+    }
+    if (quad_mask != 0x0Fu) {
         return false;
     }
 
+    if (out_min_x) *out_min_x = min_x;
+    if (out_min_y) *out_min_y = min_y;
+
     for (int q = 0; q < 4; q++) {
-        const uint16_t oam_addr = (uint16_t)(base_addr + (uint16_t)(q * 4));
-        const uint8_t oy_scr = gb_brain_read8(oam_addr);
-        const uint8_t tile   = gb_brain_read8((uint16_t)(oam_addr + 2u));
-        const uint8_t flags  = gb_brain_read8((uint16_t)(oam_addr + 3u));
-        if (oy_scr == 0u || oy_scr >= 160u) {
-            continue;
-        }
-        const bool flip_x = (flags & 0x20u) != 0u;
-        const bool flip_y = (flags & 0x40u) != 0u;
-        const uint16_t tile_base = (uint16_t)(0x8000u + (uint16_t)tile * 16u);
-        const int ox = (int)quad_ox[q];
-        const int oy = (int)quad_oy[q];
+        const bool flip_x = (flags[q] & 0x20u) != 0u;
+        const bool flip_y = (flags[q] & 0x40u) != 0u;
+        const uint16_t tile_base = (uint16_t)(0x8000u + (uint16_t)tile[q] * 16u);
+        const int ox = (int)sx[q] - (int)min_x;
+        const int oy = (int)sy[q] - (int)min_y;
 
         for (int py = 0; py < 8; py++) {
             const int src_py = flip_y ? (7 - py) : py;
@@ -201,8 +209,9 @@ static bool decode_shadow_oam_group_16x16(uint16_t base_addr,
  * (0xC300..0xC30F).
  */
 static bool decode_shadow_oam_player_16x16(uint16_t out_16x16[256],
-                                           uint16_t tint_shade1, uint16_t tint_shade2) {
-    return decode_shadow_oam_group_16x16(0xC300u, out_16x16, tint_shade1, tint_shade2);
+                                           uint16_t tint_shade1, uint16_t tint_shade2,
+                                           uint8_t *out_min_x, uint8_t *out_min_y) {
+    return decode_shadow_oam_group_16x16(0xC300u, out_16x16, tint_shade1, tint_shade2, out_min_x, out_min_y);
 }
 
 static bool decode_vram_sprite_16x16(uint8_t img_idx, bool flip_x, bool flip_bottom_x,
@@ -383,7 +392,10 @@ static void mod_voxel_on_render_3d(const app_state_t *state) {
 
     /* Player billboard: decode directly from live wShadowOAM[0..3] for 100% accurate walk animation */
     uint16_t spr_tex[256];
-    if (decode_shadow_oam_player_16x16(spr_tex, RGB565(248, 224, 192), RGB565(224, 48, 48))) {
+    uint8_t p_oam_x = 0u, p_oam_y = 0u;
+    bool have_p_oam = decode_shadow_oam_player_16x16(spr_tex, RGB565(248, 224, 192), RGB565(224, 48, 48),
+                                                     &p_oam_x, &p_oam_y);
+    if (have_p_oam) {
         r3d_draw_sprite_billboard(px, 0.0f, pz, 14.0f, 16.0f, spr_tex, 16, 16, false);
     } else {
         const uint8_t red_img  = gb_brain_read8((uint16_t)(GB_ADDR_SPRITE_DATA1 + GB_SPRITE1_IMAGE_INDEX));
@@ -400,44 +412,22 @@ static void mod_voxel_on_render_3d(const app_state_t *state) {
         }
     }
 
-    /* Live NPC billboards decoded directly from wShadowOAM[4..39] (0xC310..0xC39F) */
-    const uint8_t oam0_y = gb_brain_read8(0xC300u);
-    const uint8_t oam0_x = gb_brain_read8(0xC301u);
-    if (oam0_y != 0u && oam0_y < 160u) {
+    /* Live NPC billboards decoded directly from wShadowOAM[4..39] (handles normal + X-flipped quadrant order) */
+    if (have_p_oam) {
         for (int i = 4; i <= 36; ) {
             const uint16_t base = (uint16_t)(0xC300u + (uint16_t)(i * 4));
-            const uint8_t y0 = gb_brain_read8(base);
-            const uint8_t x0 = gb_brain_read8((uint16_t)(base + 1u));
-            if (y0 == 0u || y0 >= 160u) {
-                i++;
-                continue;
-            }
-            const uint8_t y1 = gb_brain_read8((uint16_t)(base + 4u));
-            const uint8_t x1 = gb_brain_read8((uint16_t)(base + 5u));
-            const uint8_t y2 = gb_brain_read8((uint16_t)(base + 8u));
-            const uint8_t x2 = gb_brain_read8((uint16_t)(base + 9u));
-            const uint8_t y3 = gb_brain_read8((uint16_t)(base + 12u));
-            const uint8_t x3 = gb_brain_read8((uint16_t)(base + 13u));
-
-            const bool is_16x16_grid = (x1 == (uint8_t)(x0 + 8u)) &&
-                                       (y1 == y0) &&
-                                       (x2 == x0) &&
-                                       (y2 == (uint8_t)(y0 + 8u)) &&
-                                       (x3 == (uint8_t)(x0 + 8u)) &&
-                                       (y3 == (uint8_t)(y0 + 8u));
-            if (!is_16x16_grid) {
-                i++;
-                continue;
-            }
-
+            uint8_t n_oam_x = 0u, n_oam_y = 0u;
             if (decode_shadow_oam_group_16x16(base, spr_tex,
                                               RGB565(244, 218, 184),
-                                              RGB565(72, 148, 224))) {
-                const float nx = px + (float)((int)x0 - (int)oam0_x);
-                const float nz = pz + (float)((int)y0 - (int)oam0_y);
+                                              RGB565(72, 148, 224),
+                                              &n_oam_x, &n_oam_y)) {
+                const float nx = px + (float)((int)n_oam_x - (int)p_oam_x);
+                const float nz = pz + (float)((int)n_oam_y - (int)p_oam_y);
                 r3d_draw_sprite_billboard(nx, 0.0f, nz, 14.0f, 16.0f, spr_tex, 16, 16, false);
+                i += 4;
+            } else {
+                i++;
             }
-            i += 4;
         }
     }
 
@@ -485,13 +475,13 @@ static void mod_voxel_on_render_hud(const app_state_t *state) {
                  s_mesh.tri_count,
                  daytime_name(state->daytime_mode));
     } else if (s_mesh_ready && state->voxel_pitch_deg > 0) {
-        snprintf(line, sizeof(line), "3D FPS:%2u GB:%u 3D:%u P:%d T:%d %s %s",
+        snprintf(line, sizeof(line), "3D-%s FPS:%2u GB:%u 3D:%u P:%d T:%d %s",
+                 renderer_has_hw_tri() ? "HW" : "SW",
                  (unsigned)state->perf_fps,
                  (unsigned)state->perf_gb_ms,
                  (unsigned)state->perf_3d_ms,
                  state->voxel_pitch_deg,
                  s_mesh.tri_count,
-                 dir_name(state->snap.facing_dir),
                  daytime_name(state->daytime_mode));
     } else {
         snprintf(line, sizeof(line), "2D FPS:%2u GB:%u MAP:%02X XY:%u,%u P:%d",

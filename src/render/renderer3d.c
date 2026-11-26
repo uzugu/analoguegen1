@@ -45,6 +45,11 @@ typedef struct {
 /* 16-bit depth buffer for HW path (320x288, GEQUAL on 1/w depth, 0 = far). */
 static uint16_t s_zbuf[RENDER_W * RENDER_H] __attribute__((aligned(64)));
 
+/* 64-byte-aligned persistent SDRAM ring for async HW sprite billboards (up to 16 sprites/frame). */
+#define R3D_HW_SPR_RING_MAX 16
+static uint16_t s_hw_spr_ring[R3D_HW_SPR_RING_MAX][256] __attribute__((aligned(64)));
+static int      s_hw_spr_count = 0;
+
 /* Static 8x8 RGB565 ground shadow texture (cache-line aligned in SDRAM for HW GPU). */
 static uint16_t s_shadow_tex[R3D_SHADOW_H * R3D_SHADOW_W] __attribute__((aligned(64)));
 static bool     s_shadow_tex_ready = false;
@@ -615,6 +620,8 @@ void r3d_begin_scene(uint16_t sky_color) {
                 row[x] = row_col;
             }
         }
+        s_hw_spr_count = 0;
+        renderer_hw_scene_begin(s_zbuf);
     }
 }
 
@@ -918,7 +925,13 @@ void r3d_draw_sprite_billboard(float wx, float wy, float wz, float width, float 
 
     const bool pot_tex = ((tex_w & (tex_w - 1)) == 0) && ((tex_h & (tex_h - 1)) == 0);
     if (use_hw && pot_tex) {
-        renderer_hw_tri_begin(tex_rgb565, tex_w, tex_h, s_zbuf, true);
+        const uint16_t *hw_tex = tex_rgb565;
+        if (tex_w * tex_h <= 256 && s_hw_spr_count < R3D_HW_SPR_RING_MAX) {
+            uint16_t *slot = s_hw_spr_ring[s_hw_spr_count++];
+            memcpy(slot, tex_rgb565, (size_t)(tex_w * tex_h) * sizeof(uint16_t));
+            hw_tex = slot;
+        }
+        renderer_hw_tri_begin(hw_tex, tex_w, tex_h, s_zbuf, true);
         r3d_submit_hw_tri(&t0);
         r3d_submit_hw_tri(&t1);
         renderer_hw_tri_end();
@@ -960,7 +973,9 @@ void r3d_draw_billboard(float wx, float wy, float wz, float width, float height,
 }
 
 void r3d_end_scene(void) {
-    if (!renderer_has_hw_tri() && s_fb != NULL) {
+    if (renderer_has_hw_tri()) {
+        renderer_hw_scene_end();
+    } else if (s_fb != NULL) {
         if ((((uintptr_t)s_fb & 3u) == 0u) && ((s_stride & 1) == 0)) {
             for (int y = 0; y < R3D_SW_H; y++) {
                 const uint16_t *src = s_sw_fb + (uint32_t)y * R3D_SW_W;
