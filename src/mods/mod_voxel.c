@@ -12,9 +12,11 @@ static gb_map_view_t s_map_view;
 static voxel_mesh_t  s_mesh;
 static bool          s_mesh_ready   = false;
 static uint8_t       s_last_map     = 0xFFu;
+static uint8_t       s_last_tileset = 0xFFu;
 static uint8_t       s_last_px      = 0xFFu;
 static uint8_t       s_last_py      = 0xFFu;
 static uint8_t       s_last_daytime = 0xFFu;
+static int           s_vram_refresh = 0;
 
 static const char *dir_name(uint8_t facing_dir) {
     switch (facing_dir) {
@@ -176,30 +178,41 @@ static bool decode_vram_sprite_16x16(uint8_t img_idx, bool flip_x, uint16_t out_
 }
 
 static void mod_voxel_init(app_state_t *state) {
+    (void)state;
     r3d_init();
     s_mesh_ready   = false;
     s_last_map     = 0xFFu;
+    s_last_tileset = 0xFFu;
     s_last_px      = 0xFFu;
     s_last_py      = 0xFFu;
     s_last_daytime = 0xFFu;
-    if (state && state->voxel_pitch_deg == 0) {
-        state->voxel_pitch_deg = 35;
-    }
+    s_vram_refresh = 0;
 }
 
 static void mod_voxel_on_frame(app_state_t *state) {
-    if (!state || !state->rom_loaded || state->voxel_pitch_deg <= 0) {
+    if (!state || !state->rom_loaded || state->voxel_pitch_deg <= 0 ||
+        !state->snap.in_overworld_ready) {
         s_mesh_ready = false;
         return;
     }
-    if (state->snap.in_battle != 0) {
-        /* Keep pre-battle overworld mesh and VRAM atlas alive behind the battle scene. */
-        return;
+
+    if (s_last_map != state->snap.cur_map || s_last_tileset != state->snap.tileset) {
+        s_vram_refresh = 24;
     }
 
-    /* Rebuild voxel mesh only when the player moves, changes map, or changes daytime mode. */
+    bool periodic_vram = false;
+    if (s_vram_refresh > 0) {
+        s_vram_refresh--;
+        if ((s_vram_refresh % 6) == 0) {
+            periodic_vram = true;
+        }
+    }
+
+    /* Rebuild voxel mesh when player moves, map/tileset/daytime changes, or post-warp VRAM settles. */
     bool dirty = !s_mesh_ready ||
+                 periodic_vram ||
                  s_last_map     != state->snap.cur_map ||
+                 s_last_tileset != state->snap.tileset ||
                  s_last_px      != state->snap.player_x ||
                  s_last_py      != state->snap.player_y ||
                  s_last_daytime != state->daytime_mode;
@@ -209,6 +222,7 @@ static void mod_voxel_on_frame(app_state_t *state) {
             voxel_mesher_build(&s_map_view, state, &s_mesh);
             s_mesh_ready   = (s_mesh.tri_count > 0);
             s_last_map     = state->snap.cur_map;
+            s_last_tileset = state->snap.tileset;
             s_last_px      = state->snap.player_x;
             s_last_py      = state->snap.player_y;
             s_last_daytime = state->daytime_mode;
@@ -221,6 +235,7 @@ static void mod_voxel_on_frame(app_state_t *state) {
 static void mod_voxel_on_render_3d(const app_state_t *state) {
     if (!state || !state->rom_loaded || !s_mesh_ready ||
         state->voxel_pitch_deg <= 0 ||
+        !state->snap.in_overworld_ready ||
         state->snap.in_battle != 0 ||
         state->snap.ui_overlay == (uint8_t)UI_OVERLAY_FULLSCREEN_2D) {
         return;
@@ -395,8 +410,8 @@ void mod_voxel_register(void) {
         .name            = "Dramatic Shape Voxel",
         .category        = "GRAPHICS",
         .description     = "3D diorama overworld with extruded voxels & camera pitch",
-        .enabled         = true,
-        .default_enabled = true,
+        .enabled         = false,
+        .default_enabled = false,
         .init            = mod_voxel_init,
         .on_frame        = mod_voxel_on_frame,
         .on_render_3d    = mod_voxel_on_render_3d,

@@ -33,8 +33,8 @@ void mod_manager_on_frame(app_state_t *state);
 void mod_manager_on_render_3d(const app_state_t *state);
 void mod_manager_on_render_hud(const app_state_t *state);
 
-/* Interactive Mods Menu overlay (navigation + rendering) */
-void mod_manager_menu_input(app_state_t *state, bool up, bool down, bool toggle, bool close);
+/* Interactive Unified Floating Popup Menu (navigation + rendering) */
+void mod_manager_menu_input(app_state_t *state, bool up, bool down, bool left, bool right, bool confirm, bool close);
 void mod_manager_menu_render(const app_state_t *state);
 
 /* Built-in mod registrars */

@@ -29,6 +29,7 @@ typedef uint32_t __attribute__((__may_alias__)) fb_word_t;
 static bool     s_rgb565_mode     = false;
 static uint16_t s_fb_stride_px    = RENDER_W;
 static uint16_t s_fb_stride_bytes = RENDER_W;
+static int      s_out_h           = RENDER_H;
 
 static uint16_t *s_draw_fb     = s_fb_rgb565;
 static uint16_t  s_draw_stride = RENDER_W;
@@ -188,6 +189,7 @@ bool renderer_init(renderer_caps_t *out_caps) {
                 s_rgb565_mode = true;
                 s_fb_stride_bytes = stride_bytes;
                 s_fb_stride_px = (uint16_t)(stride_bytes / 2u);
+                s_out_h = actual.height ? (int)actual.height : RENDER_H;
             }
         }
     }
@@ -205,12 +207,17 @@ bool renderer_init(renderer_caps_t *out_caps) {
             mode8.height = RENDER_H;
             mode8.color_mode = OF_VIDEO_MODE_8BIT;
             if (of_video_set_mode(&mode8) != 0) {
-                of_video_set_color_mode(OF_VIDEO_MODE_8BIT);
+                /* Graceful fallback to 320x240 8-bit if runtime does not support 320x288. */
+                mode8.height = 240;
+                if (of_video_set_mode(&mode8) != 0) {
+                    of_video_set_color_mode(OF_VIDEO_MODE_8BIT);
+                }
             }
             of_video_get_mode(&actual);
         }
         s_fb_stride_bytes = actual.stride ? actual.stride : RENDER_W;
         s_fb_stride_px = RENDER_W;
+        s_out_h = (actual.height > 0 && actual.height <= RENDER_H) ? (int)actual.height : RENDER_H;
         install_rgb332_palette();
         for (uint32_t c = 0u; c < 65536u; c++) {
             s_rgb565_to_332_lut[c] = rgb565_to_rgb332((uint16_t)c);
@@ -291,8 +298,10 @@ void renderer_end_frame(void) {
     if (!s_rgb565_mode) {
         uint8_t *dst8 = of_video_surface();
         if (dst8) {
-            for (int y = 0; y < RENDER_H; y++) {
-                const uint16_t *src = s_fb_rgb565 + (uint32_t)y * RENDER_W;
+            const int copy_h = (s_out_h > 0 && s_out_h < RENDER_H) ? s_out_h : RENDER_H;
+            const int src_y0 = (RENDER_H - copy_h) / 2;
+            for (int y = 0; y < copy_h; y++) {
+                const uint16_t *src = s_fb_rgb565 + (uint32_t)(src_y0 + y) * RENDER_W;
                 uint8_t *dst = dst8 + (uint32_t)y * s_fb_stride_bytes;
                 int x = 0;
                 if (((uintptr_t)dst & 3u) == 0u) {
@@ -348,6 +357,51 @@ void renderer_blit_gb_lcd(const uint16_t *lcd_rgb565, int dst_x, int dst_y) {
         const uint16_t *src = lcd_rgb565 + (uint32_t)(src_y + y) * GB_SRC_W + src_x;
         uint16_t *dst = s_draw_fb + (uint32_t)(dst_y + y) * s_draw_stride + dst_x;
         memcpy(dst, src, (size_t)copy_w * sizeof(uint16_t));
+    }
+}
+
+void renderer_blit_gb_lcd_2x(const uint16_t *lcd_rgb565, bool lcd_grid) {
+    if (!lcd_rgb565 || !s_draw_fb) {
+        return;
+    }
+
+    for (int y = 0; y < GB_SRC_H; y++) {
+        const uint16_t *src = lcd_rgb565 + (uint32_t)y * GB_SRC_W;
+        uint16_t *row0 = s_draw_fb + (uint32_t)(y * 2) * s_draw_stride;
+        uint16_t *row1 = s_draw_fb + (uint32_t)(y * 2 + 1) * s_draw_stride;
+
+        if (!lcd_grid) {
+            if ((((uintptr_t)row0 & 3u) == 0u) && (((uintptr_t)row1 & 3u) == 0u)) {
+                fb_word_t *r0 = (fb_word_t *)(void *)row0;
+                fb_word_t *r1 = (fb_word_t *)(void *)row1;
+                for (int x = 0; x < GB_SRC_W; x++) {
+                    const uint16_t c = src[x];
+                    const uint32_t p = ((uint32_t)c << 16) | c;
+                    r0[x] = p;
+                    r1[x] = p;
+                }
+            } else {
+                for (int x = 0; x < GB_SRC_W; x++) {
+                    const uint16_t c = src[x];
+                    const int dx = x * 2;
+                    row0[dx]     = c;
+                    row0[dx + 1] = c;
+                    row1[dx]     = c;
+                    row1[dx + 1] = c;
+                }
+            }
+        } else {
+            /* Authentic DMG/Pocket 2x2 pixel matrix: subtle darkened right/bottom subpixels. */
+            for (int x = 0; x < GB_SRC_W; x++) {
+                const uint16_t c   = src[x];
+                const uint16_t dim = (uint16_t)(((c >> 1) & 0x7BEFu) + ((c >> 2) & 0x39E7u));
+                const int dx = x * 2;
+                row0[dx]     = c;
+                row0[dx + 1] = dim;
+                row1[dx]     = dim;
+                row1[dx + 1] = dim;
+            }
+        }
     }
 }
 

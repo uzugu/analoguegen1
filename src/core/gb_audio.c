@@ -15,8 +15,8 @@
 #include "minigb_apu.h"
 
 static struct minigb_apu_ctx s_apu;
-static int16_t s_audio_24k[AUDIO_SAMPLES_TOTAL];
-static int16_t s_audio_48k[AUDIO_SAMPLES_TOTAL * 2];
+static int16_t s_audio_24k[2048];
+static int16_t s_audio_48k[4096];
 static bool s_audio_ready = false;
 
 void gb_audio_init(void)

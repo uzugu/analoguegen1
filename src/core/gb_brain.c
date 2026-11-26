@@ -50,6 +50,7 @@ static uint32_t    cart_ram_dirty_frames = 0U;
 
 static uint16_t    lcd_fb[GB_LCD_W * GB_LCD_H];
 static bool        s_skip_ppu = false;
+static uint8_t     s_filter_mode = 0U;
 
 static uint8_t gb_rom_read(struct gb_s *g, const uint_fast32_t addr)
 {
@@ -108,13 +109,15 @@ static void gb_error_cb(struct gb_s *g, const enum gb_error_e err, const uint16_
 
 static void lcd_draw_line(struct gb_s *g, const uint8_t *pixels, const uint_fast8_t line)
 {
-    /* Classic warm DMG / GBC-friendly RGB565 4-shade palette (0=lightest..3=darkest). */
-    static const uint16_t dmg_palette[4] = {
-        0xFFBCU, /* Shade 0: RGB(248, 244, 224) warm cream white */
-        0xBD92U, /* Shade 1: RGB(184, 176, 144) warm light olive-tan */
-        0x6B2AU, /* Shade 2: RGB(104, 100,  80) warm dark olive-slate */
-        0x18C2U  /* Shade 3: RGB( 24,  24,  20) deep warm charcoal */
+    /* 4 Game Boy palettes (0=DMG Green, 1=Pocket Olive, 2=SGB Red, 3=Crisp B&W). */
+    static const uint16_t k_palettes[4][4] = {
+        { 0xE7DAU, 0x8E0EU, 0x334AU, 0x08C4U }, /* 0/4: DMG Pea-Green */
+        { 0xEF5BU, 0xAD93U, 0x5B0AU, 0x1903U }, /* 1/5: Game Boy Pocket */
+        { 0xFFBCU, 0xF4CFU, 0xAA08U, 0x20C3U }, /* 2:   SGB Pokemon Red */
+        { 0xFFFFU, 0xAD55U, 0x52AAU, 0x1082U }  /* 3:   Crisp B&W */
     };
+    const uint16_t *pal;
+    uint8_t pal_idx;
     uint16_t *dst;
     unsigned int x;
 
@@ -128,9 +131,20 @@ static void lcd_draw_line(struct gb_s *g, const uint8_t *pixels, const uint_fast
         return;
     }
 
+    if (s_filter_mode == 1U || s_filter_mode == 5U) {
+        pal_idx = 1U;
+    } else if (s_filter_mode == 2U) {
+        pal_idx = 2U;
+    } else if (s_filter_mode == 3U) {
+        pal_idx = 3U;
+    } else {
+        pal_idx = 0U;
+    }
+    pal = k_palettes[pal_idx];
+
     dst = &lcd_fb[(size_t)line * GB_LCD_W];
     for (x = 0U; x < GB_LCD_W; x++) {
-        dst[x] = dmg_palette[pixels[x] & 3U];
+        dst[x] = pal[pixels[x] & 3U];
     }
 }
 
@@ -313,6 +327,11 @@ void gb_brain_set_skip_ppu(bool skip)
     }
 }
 
+void gb_brain_set_filter(uint8_t filter_mode)
+{
+    s_filter_mode = filter_mode;
+}
+
 void gb_brain_run_frame(app_state_t *state)
 {
     uint8_t new_x;
@@ -363,6 +382,19 @@ void gb_brain_run_frame(app_state_t *state)
     state->snap.walk_dx = (int8_t)gb_brain_read8((uint16_t)(GB_ADDR_SPRITE_DATA1 + GB_SPRITE1_X_STEP_VEC));
     state->snap.walk_dy = (int8_t)gb_brain_read8((uint16_t)(GB_ADDR_SPRITE_DATA1 + GB_SPRITE1_Y_STEP_VEC));
     state->snap.in_battle = gb_brain_read8(GB_ADDR_IS_IN_BATTLE);
+    {
+        uint8_t lcdc   = gb_brain_read8(GB_ADDR_LCDC);
+        uint8_t bgp    = gb_brain_read8(0xFF47U);
+        uint8_t p0_pic = gb_brain_read8((uint16_t)(GB_ADDR_SPRITE_DATA1 + GB_SPRITE1_PICTURE_ID));
+        uint8_t p0_img = gb_brain_read8((uint16_t)(GB_ADDR_SPRITE_DATA1 + GB_SPRITE1_IMAGE_INDEX));
+        state->snap.in_overworld_ready =
+            (state->snap.in_battle == 0U &&
+             state->snap.map_w > 0U && state->snap.map_h > 0U &&
+             state->snap.map_w <= 64U && state->snap.map_h <= 64U &&
+             (lcdc & 0x80U) != 0U &&
+             bgp != 0x00U && bgp != 0xFFU &&
+             p0_pic != 0U && p0_img != 0xFFU);
+    }
     state->snap.party_count = gb_brain_read8(GB_ADDR_PARTY_COUNT);
     state->snap.lead_species = gb_brain_read8(GB_ADDR_PARTY_SPECIES);
     for (i = 0U; i < 6U; i++) {

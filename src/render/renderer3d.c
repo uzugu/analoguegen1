@@ -10,7 +10,7 @@
 #define R3D_DEG2RAD  0.01745329251994329577f
 
 #define R3D_SW_W     160
-#define R3D_SW_H     120
+#define R3D_SW_H     144
 
 #define R3D_SHADOW_W 8
 #define R3D_SHADOW_H 8

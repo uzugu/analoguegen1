@@ -569,6 +569,8 @@ void gb_brain_set_input(const gb_input_t *in)
 
 void gb_brain_set_skip_ppu(bool skip) { (void)skip; }
 
+void gb_brain_set_filter(uint8_t filter_mode) { (void)filter_mode; }
+
 void gb_brain_run_frame(app_state_t *state)
 {
     if (!s_initialized || s_ctx == NULL) {

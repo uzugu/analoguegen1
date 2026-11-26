@@ -43,6 +43,7 @@ typedef struct {
     int8_t     walk_dx;
     int8_t     walk_dy;
     uint8_t    in_battle;      /* 0=overworld, 1=wild, 2=trainer */
+    bool       in_overworld_ready; /* true only when live overworld map + player sprite are active */
     uint8_t    ui_overlay;     /* ui_overlay_mode_t */
     uint8_t    party_count;
     uint8_t    lead_species;
@@ -75,6 +76,8 @@ typedef struct {
     int             voxel_pitch_deg;
     /* Daytime lighting mode: 0=DAY, 1=DUSK, 2=NIGHT, 3=DAWN */
     uint8_t         daytime_mode;
+    /* Game Boy display filter: 0=DMG, 1=POCKET, 2=SGB RED, 3=B&W, 4=DMG+GRID, 5=PKT+GRID */
+    uint8_t         gb_filter_mode;
     /* Live frame performance counters */
     uint16_t        perf_fps;
     uint16_t        perf_gb_ms;

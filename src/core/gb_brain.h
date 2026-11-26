@@ -34,6 +34,9 @@ void gb_brain_run_frame(app_state_t *state);
 /* Skip software LCD output; the LCD buffer keeps its last contents (no-op outside Peanut-GB). */
 void gb_brain_set_skip_ppu(bool skip);
 
+/* Set Game Boy 4-shade palette filter (0/4=DMG, 1/5=Pocket, 2=SGB Red, 3=B&W). */
+void gb_brain_set_filter(uint8_t filter_mode);
+
 /* Read/write arbitrary GB address space (WRAM, SRAM, ROM, VRAM). */
 uint8_t gb_brain_read8(uint16_t addr);
 void    gb_brain_write8(uint16_t addr, uint8_t val);

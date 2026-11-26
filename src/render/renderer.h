@@ -5,7 +5,7 @@
 #include <stdint.h>
 
 #define RENDER_W 320
-#define RENDER_H 240
+#define RENDER_H 288
 
 /* RGB565 helper macro (R:0..31, G:0..63, B:0..31) */
 #define RGB565(r8, g8, b8) \
@@ -22,8 +22,9 @@ bool renderer_init(renderer_caps_t *out_caps);
 void renderer_begin_frame(uint16_t clear_color);
 void renderer_end_frame(void);
 
-/* Blit 160x144 RGB565 Game Boy LCD centered (1x) or nearest-neighbor scaled to dst_w x dst_h. */
+/* Blit 160x144 RGB565 Game Boy LCD centered (1x), exact 2x2 (320x288) with optional LCD grid, or scaled. */
 void renderer_blit_gb_lcd(const uint16_t *lcd_rgb565, int dst_x, int dst_y);
+void renderer_blit_gb_lcd_2x(const uint16_t *lcd_rgb565, bool lcd_grid);
 void renderer_blit_gb_lcd_scaled(const uint16_t *lcd_rgb565, int dst_x, int dst_y, int dst_w, int dst_h);
 
 /* Minimal 2D primitives for HUD, battle move info, and Mods menu */
