@@ -149,6 +149,13 @@ static bool neighbor_is_tall(const gb_map_view_t *map, int vx, int vy) {
     return map->tile_class[vy][vx] == (uint8_t)TILE_CLASS_TALL;
 }
 
+static bool is_mergeable_flat_tile(uint8_t cls, uint8_t tid) {
+    if (cls != (uint8_t)TILE_CLASS_GROUND && cls != (uint8_t)TILE_CLASS_GRASS) {
+        return false;
+    }
+    return (tid == 0x7FU || tid == 0x00U);
+}
+
 void voxel_mesher_build(const gb_map_view_t *map, const app_state_t *state, voxel_mesh_t *out) {
     if (out == NULL) {
         return;
@@ -165,22 +172,90 @@ void voxel_mesher_build(const gb_map_view_t *map, const app_state_t *state, voxe
     const float water_u_shift = water_shimmer ? 0.5f : 0.0f;
 
     for (int vy = 0; vy < GB_MAP_VIEW_H; vy++) {
+        const float z0 = (float)vy * VOXEL_TILE_SIZE;
+        const float z1 = z0 + VOXEL_TILE_SIZE;
+
         for (int vx = 0; vx < GB_MAP_VIEW_W; vx++) {
             const uint8_t cls = map->tile_class[vy][vx];
             const float h = tile_height_for(cls, tileset);
-
-            const float x0 = (float)vx * VOXEL_TILE_SIZE;
-            const float x1 = x0 + VOXEL_TILE_SIZE;
-            const float z0 = (float)vy * VOXEL_TILE_SIZE;
-            const float z1 = z0 + VOXEL_TILE_SIZE;
-
             const uint8_t tid = (uint8_t)(map->tile_id[vy][vx] & 0x7Fu);
+
             const float tile_u = (float)(tid & 15u) * 8.0f;
             const float tile_v = (float)(tid >> 4)  * 8.0f;
             float u0 = tile_u + VOXEL_UV_INSET;
             const float v0 = tile_v + VOXEL_UV_INSET;
             float u1 = u0 + VOXEL_UV_SPAN;
             const float v1 = v0 + VOXEL_UV_SPAN;
+
+            /*
+             * Horizontal run merging for solid blank/void flat tiles (tid 0x7F or 0x00).
+             * Stretching UVs across a uniform blank/void tile looks identical while
+             * collapsing a full 20-tile border row from 40 tris down to 2 tris.
+             * Textured ground/grass tiles keep 1 quad per tile so UVs never stretch.
+             */
+            if (is_mergeable_flat_tile(cls, tid)) {
+                int run_end = vx + 1;
+                while (run_end < GB_MAP_VIEW_W &&
+                       map->tile_class[vy][run_end] == cls &&
+                       (uint8_t)(map->tile_id[vy][run_end] & 0x7Fu) == tid) {
+                    run_end++;
+                }
+
+                const float rx0 = (float)vx * VOXEL_TILE_SIZE;
+                const float rx1 = (float)run_end * VOXEL_TILE_SIZE;
+                const uint16_t c_top = shade_rgb565(cls, tileset, daytime_mode, FACE_SHADE_TOP);
+                emit_quad(out,
+                          make_vert(rx0, h, z0, u0, v0, c_top),
+                          make_vert(rx0, h, z1, u0, v1, c_top),
+                          make_vert(rx1, h, z1, u1, v1, c_top),
+                          make_vert(rx1, h, z0, u1, v0, c_top));
+
+                /* Emit drop walls only where the run borders recessed tiles (e.g., water). */
+                for (int kx = vx; kx < run_end; kx++) {
+                    const float nh_south = neighbor_height(map, kx, vy + 1);
+                    if (h > nh_south) {
+                        const float kx0 = (float)kx * VOXEL_TILE_SIZE;
+                        const float kx1 = kx0 + VOXEL_TILE_SIZE;
+                        const uint16_t c_south = shade_rgb565(cls, tileset, daytime_mode, FACE_SHADE_SOUTH);
+                        emit_quad(out,
+                                  make_vert(kx0, h,        z1, u0, v0, c_south),
+                                  make_vert(kx0, nh_south, z1, u0, v1, c_south),
+                                  make_vert(kx1, nh_south, z1, u1, v1, c_south),
+                                  make_vert(kx1, h,        z1, u1, v0, c_south));
+                    }
+                }
+                {
+                    const float nh_east = neighbor_height(map, run_end, vy);
+                    if (h > nh_east) {
+                        const uint16_t c_east = shade_rgb565(cls, tileset, daytime_mode, FACE_SHADE_EAST);
+                        emit_quad(out,
+                                  make_vert(rx1, h,       z1, u0, v0, c_east),
+                                  make_vert(rx1, nh_east, z1, u0, v1, c_east),
+                                  make_vert(rx1, nh_east, z0, u1, v1, c_east),
+                                  make_vert(rx1, h,       z0, u1, v0, c_east));
+                    }
+                }
+                {
+                    const float nh_west = neighbor_height(map, vx - 1, vy);
+                    if (h > nh_west) {
+                        const uint16_t c_west = shade_rgb565(cls, tileset, daytime_mode, FACE_SHADE_WEST);
+                        emit_quad(out,
+                                  make_vert(rx0, h,       z0, u0, v0, c_west),
+                                  make_vert(rx0, nh_west, z0, u0, v1, c_west),
+                                  make_vert(rx0, nh_west, z1, u1, v1, c_west),
+                                  make_vert(rx0, h,       z1, u1, v0, c_west));
+                    }
+                }
+
+                vx = run_end - 1;
+                if (out->tri_count + 2 > VOXEL_MAX_TRIS) {
+                    return;
+                }
+                continue;
+            }
+
+            const float x0 = (float)vx * VOXEL_TILE_SIZE;
+            const float x1 = x0 + VOXEL_TILE_SIZE;
 
             if (cls == (uint8_t)TILE_CLASS_WATER && water_shimmer) {
                 const float u_max = tile_u + 8.0f - VOXEL_UV_INSET;
@@ -198,7 +273,7 @@ void voxel_mesher_build(const gb_map_view_t *map, const app_state_t *state, voxe
                 const float um = 0.5f * (u0 + u1);
                 const float hr = h + 5.0f;
                 const uint16_t c_south_roof = shade_rgb565(cls, tileset, daytime_mode, FACE_SHADE_TOP);
-                const uint16_t c_north_roof = shade_rgb565(cls, tileset, daytime_mode, FACE_SHADE_EAST);
+                const uint16_t c_north_roof = shade_rgb565(cls, tileset, daytime_mode, FACE_SHADE_NORTH);
 
                 /* Front (South-facing) sloped roof plane */
                 emit_quad(out,

@@ -697,8 +697,12 @@ void renderer_hw_scene_begin(uint16_t *zbuf_16) {
     if (!s_hw_tri || !s_rgb565_mode || !s_draw_fb || !zbuf_16) {
         return;
     }
-    of_cache_flush_range((void *)zbuf_16, (uint32_t)(RENDER_W * RENDER_H * 2));
     of_cache_flush_range((void *)s_draw_fb, (uint32_t)s_fb_stride_bytes * (uint32_t)RENDER_H);
+    of_gpu_clear_rect_strided((uint32_t)(uintptr_t)zbuf_16,
+                              (uint16_t)(RENDER_W * 2),
+                              (uint16_t)RENDER_H,
+                              (uint16_t)(RENDER_W * 2),
+                              0u);
     s_hw_tri_zbuf = zbuf_16;
 #else
     (void)zbuf_16;

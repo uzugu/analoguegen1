@@ -49,8 +49,11 @@ CFLAGS += -std=gnu11 -Os -Wno-unused-variable -Wno-unused-label -Wno-unused-func
 else ifeq ($(BACKEND),peanut)
 SRCS := $(COMMON_SRCS) \
 	core/gb_brain.c \
-	core/gb_audio.c \
-	$(APU_DIR)/minigb_apu.c
+	core/gb_audio.c
+
+ifneq ($(filter pc app_pc,$(MAKECMDGOALS)),)
+SRCS += $(APU_DIR)/minigb_apu.c
+endif
 
 CFLAGS += -O3 -I$(CURDIR) -I$(CURDIR)/core -I$(CURDIR)/voxel -I$(CURDIR)/render -I$(CURDIR)/mods -I$(PEANUT_DIR) -I$(APU_DIR)
 CFLAGS += -DENABLE_SOUND=1 -DAUDIO_SAMPLE_RATE=16000 -DMINIGB_APU_AUDIO_FORMAT_S16SYS

@@ -545,7 +545,9 @@ static void r3d_submit_tri(const voxel_tri_t *tri,
 }
 
 void r3d_init(void) {
-    memset(s_zbuf, renderer_has_hw_tri() ? 0 : 0xFF, sizeof(s_zbuf));
+    if (!renderer_has_hw_tri()) {
+        memset(s_zbuf, 0xFF, sizeof(s_zbuf));
+    }
     memset(s_sw_zbuf, 0xFF, sizeof(s_sw_zbuf));
     s_fb     = NULL;
     s_stride = RENDER_W;
@@ -572,10 +574,8 @@ void r3d_begin_scene(uint16_t sky_color) {
     if (!hw_tri) {
         /* SW tests < on linear depth (0xFFFF = far). */
         memset(s_sw_zbuf, 0xFF, sizeof(s_sw_zbuf));
-    } else {
-        /* Hardware Z_TEST_WRITE tests GEQUAL on 1/w depth (0 = far). */
-        memset(s_zbuf, 0, sizeof(s_zbuf));
     }
+    /* HW path clears s_zbuf to 0 (Z-far for GEQUAL 1/w) in FPGA hardware via renderer_hw_scene_begin(). */
 
     if (s_fb == NULL) {
         return;
@@ -604,7 +604,7 @@ void r3d_begin_scene(uint16_t sky_color) {
             }
         }
     } else {
-        /* Subtle vertical atmospheric gradient on full 320x240 buffer for HW path. */
+        /* Subtle vertical atmospheric gradient on full 320x288 buffer for HW path. */
         for (int y = 0; y < RENDER_H; y++) {
             const uint32_t scale = 216u + (uint32_t)((y * 56) / (RENDER_H - 1));
             uint32_t r = (base_r * scale) >> 8;
@@ -616,8 +616,16 @@ void r3d_begin_scene(uint16_t sky_color) {
 
             const uint16_t row_col = (uint16_t)((r << 11) | (g << 5) | b);
             uint16_t *row = s_fb + (uint32_t)y * (uint32_t)s_stride;
-            for (int x = 0; x < RENDER_W; x++) {
-                row[x] = row_col;
+            if (((uintptr_t)row & 3u) == 0u) {
+                const uint32_t p2 = ((uint32_t)row_col << 16) | row_col;
+                r3d_u32_t *row32 = (r3d_u32_t *)(void *)row;
+                for (int x = 0; x < RENDER_W / 2; x++) {
+                    row32[x] = p2;
+                }
+            } else {
+                for (int x = 0; x < RENDER_W; x++) {
+                    row[x] = row_col;
+                }
             }
         }
         s_hw_spr_count = 0;

@@ -43,7 +43,8 @@ void renderer_blit_gb_subrect(const uint16_t *lcd_rgb565,
                               int src_x, int src_y, int src_w, int src_h,
                               int dst_x, int dst_y);
 
-/* Pocket os30 hardware triangle batching (implemented inside renderer.c via of_gpu.h). */
+/* Pocket os30 hardware triangle batching (implemented inside renderer.c via of_gpu.h).
+ * renderer_hw_scene_begin() flushes the draw framebuffer and clears zbuf_16 in FPGA hardware. */
 void renderer_hw_scene_begin(uint16_t *zbuf_16);
 void renderer_hw_scene_end(void);
 void renderer_hw_tri_begin(const uint16_t *atlas_rgb565, int atlas_w, int atlas_h,
