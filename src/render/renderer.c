@@ -439,6 +439,34 @@ bool renderer_has_hw_tri(void) {
     return s_hw_tri;
 }
 
+void renderer_blit_gb_lcd_scaled(const uint16_t *lcd_rgb565, int dst_x, int dst_y, int dst_w, int dst_h) {
+    if (!lcd_rgb565 || !s_draw_fb || dst_w <= 0 || dst_h <= 0) {
+        return;
+    }
+
+    static uint8_t x_lut[RENDER_W];
+    int x_start = (dst_x < 0) ? -dst_x : 0;
+    int x_end   = (dst_x + dst_w > RENDER_W) ? (RENDER_W - dst_x) : dst_w;
+    int y_start = (dst_y < 0) ? -dst_y : 0;
+    int y_end   = (dst_y + dst_h > RENDER_H) ? (RENDER_H - dst_y) : dst_h;
+    if (x_start >= x_end || y_start >= y_end) {
+        return;
+    }
+
+    for (int dx = x_start; dx < x_end; dx++) {
+        x_lut[dx] = (uint8_t)((dx * GB_SRC_W) / dst_w);
+    }
+
+    for (int dy = y_start; dy < y_end; dy++) {
+        int sy = (dy * GB_SRC_H) / dst_h;
+        const uint16_t *src_row = lcd_rgb565 + (uint32_t)sy * GB_SRC_W;
+        uint16_t *dst_row = s_draw_fb + (uint32_t)(dst_y + dy) * s_draw_stride + dst_x;
+        for (int dx = x_start; dx < x_end; dx++) {
+            dst_row[dx] = src_row[x_lut[dx]];
+        }
+    }
+}
+
 void renderer_blit_gb_subrect(const uint16_t *lcd_rgb565,
                               int src_x, int src_y, int src_w, int src_h,
                               int dst_x, int dst_y) {

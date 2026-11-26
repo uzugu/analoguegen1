@@ -42,7 +42,7 @@ static void followers_on_render_3d(const app_state_t *state) {
 }
 
 static void followers_on_render_hud(const app_state_t *state) {
-    if (state == NULL) {
+    if (state == NULL || !state->show_debug_hud) {
         return;
     }
 

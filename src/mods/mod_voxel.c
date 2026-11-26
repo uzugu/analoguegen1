@@ -185,7 +185,7 @@ static void mod_voxel_on_render_3d(const app_state_t *state) {
 }
 
 static void mod_voxel_on_render_hud(const app_state_t *state) {
-    if (!state) {
+    if (!state || !state->show_debug_hud) {
         return;
     }
 

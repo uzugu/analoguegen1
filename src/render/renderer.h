@@ -22,8 +22,9 @@ bool renderer_init(renderer_caps_t *out_caps);
 void renderer_begin_frame(uint16_t clear_color);
 void renderer_end_frame(void);
 
-/* Blit 160x144 RGB565 Game Boy LCD centered (or 1x) into the 320x240 buffer. */
+/* Blit 160x144 RGB565 Game Boy LCD centered (1x) or nearest-neighbor scaled to dst_w x dst_h. */
 void renderer_blit_gb_lcd(const uint16_t *lcd_rgb565, int dst_x, int dst_y);
+void renderer_blit_gb_lcd_scaled(const uint16_t *lcd_rgb565, int dst_x, int dst_y, int dst_w, int dst_h);
 
 /* Minimal 2D primitives for HUD, battle move info, and Mods menu */
 void renderer_fill_rect(int x, int y, int w, int h, uint16_t color);

@@ -47,30 +47,21 @@ static void render_missing_rom_screen(const char *rom_path) {
     char path_buf[24];
     snprintf(path_buf, sizeof(path_buf), "%.18s", rom_path ? rom_path : "pokered.gb");
     renderer_draw_text(x + 8, y + 88,  path_buf, dim, bg, false);
-    renderer_draw_text(x + 8, y + 116, "X/Y or L+R: Mods", RGB565(115, 220, 155), bg, false);
+    renderer_draw_text(x + 8, y + 116, "L+R: Mods  L+SEL: HUD", RGB565(115, 220, 155), bg, false);
 }
 
 static void render_footer_bar(const app_state_t *state) {
-    const int y = 198;
+    if (!state->show_debug_hud) {
+        return;
+    }
+    const int y = 212;
     const uint16_t bg     = RGB565(14, 18, 30);
     const uint16_t border = RGB565(50, 75, 115);
-    const uint16_t fg     = RGB565(215, 225, 240);
     const uint16_t dim    = RGB565(135, 160, 195);
 
-    renderer_fill_rect(4, y, RENDER_W - 8, 38, bg);
-    renderer_draw_rect(4, y, RENDER_W - 8, 38, border);
-
-    char line1[48];
-    if (state->rom_loaded) {
-        const char *title = state->rom_title[0] != '\0' ? state->rom_title : "GAME BOY";
-        snprintf(line1, sizeof(line1), "%.16s  F:%lu",
-                 title, (unsigned long)state->frame_count);
-    } else {
-        snprintf(line1, sizeof(line1), "analoguegen1  NO ROM");
-    }
-
-    renderer_draw_text(10, y + 6,  line1, fg, bg, false);
-    renderer_draw_text(10, y + 20, "L+R/X/Y:Mods  L:Pitch  SELECT/START", dim, bg, false);
+    renderer_fill_rect(4, y, RENDER_W - 8, 24, bg);
+    renderer_draw_rect(4, y, RENDER_W - 8, 24, border);
+    renderer_draw_text(10, y + 8, "L+R:Mods  R+SEL:Box  L+SEL:HUD  L:Pitch", dim, bg, false);
 }
 
 int main(int argc, char **argv) {
@@ -95,7 +86,6 @@ int main(int argc, char **argv) {
     mod_manager_init(&state);
 
     const int gb_dst_x = (RENDER_W - GB_LCD_W) / 2;
-    const int gb_dst_y = (RENDER_H - GB_LCD_H) / 2;
 
     unsigned int fps_window_start = of_time_ms();
     uint32_t     fps_frames = 0;
@@ -108,9 +98,13 @@ int main(int argc, char **argv) {
                         (of_btn(OF_BTN_R1) && of_btn_pressed(OF_BTN_L1));
         bool box_combo = (of_btn(OF_BTN_R1) && of_btn_pressed(OF_BTN_SELECT)) ||
                          (of_btn(OF_BTN_SELECT) && of_btn_pressed(OF_BTN_R1));
-        bool menu_toggle = lr_combo ||
-                           of_btn_pressed(OF_BTN_X) ||
-                           of_btn_pressed(OF_BTN_Y);
+        bool hud_combo = (of_btn(OF_BTN_L1) && of_btn_pressed(OF_BTN_SELECT)) ||
+                         (of_btn(OF_BTN_SELECT) && of_btn_pressed(OF_BTN_L1));
+        bool menu_toggle = lr_combo;
+
+        if (hud_combo) {
+            state.show_debug_hud = !state.show_debug_hud;
+        }
 
         if (state.mods_menu_open) {
             bool up     = of_btn_pressed(OF_BTN_UP);
@@ -141,7 +135,7 @@ int main(int argc, char **argv) {
                 state.mods_menu_open = true;
             } else if (box_combo && mod_manager_is_enabled("gen3_box")) {
                 state.gen3box_open = true;
-            } else if (of_btn_pressed(OF_BTN_L1) && !of_btn(OF_BTN_R1)) {
+            } else if (of_btn_pressed(OF_BTN_L1) && !of_btn(OF_BTN_R1) && !of_btn(OF_BTN_SELECT)) {
                 state.voxel_pitch_deg = cycle_voxel_pitch(state.voxel_pitch_deg);
             }
 
@@ -184,14 +178,12 @@ int main(int argc, char **argv) {
 
         if (state.rom_loaded) {
             if (!voxel_3d_active) {
-                renderer_draw_rect(gb_dst_x - 1, gb_dst_y - 1,
-                                   GB_LCD_W + 2, GB_LCD_H + 2,
-                                   RGB565(65, 95, 140));
-                renderer_blit_gb_lcd(gb_brain_get_lcd_rgb565(), gb_dst_x, gb_dst_y);
+                /* Aspect-preserving full-height 2D GB LCD: 266x240 centered (10:9) */
+                renderer_blit_gb_lcd_scaled(gb_brain_get_lcd_rgb565(), 27, 0, 266, 240);
             } else if (state.snap.dialogue_open) {
                 /* Composite authentic GB bottom dialogue box (rows 96..143) over 3D scene */
-                renderer_draw_rect(gb_dst_x - 1, 147, GB_LCD_W + 2, 50, RGB565(220, 228, 240));
-                renderer_blit_gb_subrect(gb_brain_get_lcd_rgb565(), 0, 96, GB_LCD_W, 48, gb_dst_x, 148);
+                renderer_draw_rect(gb_dst_x - 1, 187, GB_LCD_W + 2, 50, RGB565(220, 228, 240));
+                renderer_blit_gb_subrect(gb_brain_get_lcd_rgb565(), 0, 96, GB_LCD_W, 48, gb_dst_x, 188);
             }
         } else {
             render_missing_rom_screen(rom_path);

@@ -58,6 +58,7 @@ typedef struct {
     bool            rom_loaded;
     bool            mods_menu_open;
     bool            gen3box_open;
+    bool            show_debug_hud;
     game_version_t  version;
     char            rom_title[17];
     uint32_t        frame_count;
