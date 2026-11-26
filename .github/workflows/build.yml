@@ -30,10 +30,14 @@ jobs:
         run: make pocket
 
       - name: Verify Static Recompilation Runtime ELF (gb-recompiled RV32)
-        run: make -C src BACKEND=recomp clean pocket
+        run: |
+          make -C src clean
+          make -C src BACKEND=recomp pocket
 
       - name: Rebuild Peanut-GB ELF for artifact
-        run: make -C src clean pocket
+        run: |
+          make -C src clean
+          make -C src pocket
 
       - name: Build PC SDL2 binary
         run: make pc
