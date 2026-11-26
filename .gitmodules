@@ -1,0 +1,6 @@
+[submodule "third_party/openfpgaSDK"]
+	path = third_party/openfpgaSDK
+	url = https://github.com/openfpgaOS/openfpgaSDK.git
+[submodule "third_party/Peanut-GB"]
+	path = third_party/Peanut-GB
+	url = https://github.com/deltabeard/Peanut-GB.git

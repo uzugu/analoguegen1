@@ -1,0 +1,41 @@
+name: Build Pocket ELF & PC SDL2
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout repository (with submodules)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install RISC-V toolchain and SDL2
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential \
+            gcc-riscv64-unknown-elf \
+            binutils-riscv64-unknown-elf \
+            libsdl2-dev \
+            pkg-config \
+            make
+
+      - name: Build Analogue Pocket RISC-V ELF
+        run: make pocket
+
+      - name: Build PC SDL2 binary
+        run: make pc
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: analoguegen1-builds
+          path: |
+            build/app.elf
+            src/app_pc

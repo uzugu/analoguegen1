@@ -1,0 +1,24 @@
+# Build artifacts
+build/
+dist/
+.obj/
+*.o
+*.d
+*.elf
+*.bin
+app_pc
+app_pc.exe
+
+# User ROMs and saves (NEVER commit copyrighted ROMs or personal saves)
+*.gb
+*.gbc
+*.sav
+*.rtc
+roms/
+saves/
+
+# OS / Editor clutter
+.DS_Store
+Thumbs.db
+.vscode/
+*.swp

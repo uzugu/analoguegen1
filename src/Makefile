@@ -1,0 +1,36 @@
+# analoguegen1 — openfpgaOS + PC SDL2 build rules
+
+ROOT        := $(abspath $(CURDIR)/..)
+SDK_DIR     := $(ROOT)/third_party/openfpgaSDK/src/sdk
+PEANUT_DIR  := $(ROOT)/third_party/Peanut-GB
+BUILD_DIR   := $(ROOT)/build
+OBJ_DIR     := $(BUILD_DIR)/obj
+
+USE_SDK_CONTAINER := 0
+OF_SDK_IN_CONTAINER := 1
+
+SRCS := \
+	main.c \
+	core/gb_brain.c \
+	render/renderer.c \
+	mods/mod_manager.c \
+	mods/mod_voxel.c \
+	mods/mod_moveinfo.c \
+	mods/mod_followers.c
+
+CFLAGS += -I$(CURDIR) -I$(CURDIR)/core -I$(CURDIR)/render -I$(CURDIR)/mods -I$(PEANUT_DIR)
+CFLAGS += -DENABLE_SOUND=0 -DENABLE_LCD=1 -DPEANUT_GB_12_COLOUR=0 -DPEANUT_GB_HIGH_LCD_ACCURACY=0
+
+.DEFAULT_GOAL := pocket
+
+include $(SDK_DIR)/sdk.mk
+
+.PHONY: pocket pc clean
+
+pocket: $(BUILD_DIR)/app.elf
+	@$(SIZE) $< 2>/dev/null || true
+
+pc: app_pc
+
+clean: sdk-clean
+	rm -rf $(BUILD_DIR)
