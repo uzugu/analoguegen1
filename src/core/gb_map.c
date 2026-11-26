@@ -38,6 +38,10 @@ static bool is_flat_walkable(uint8_t cls)
 static uint8_t classify_tile(uint8_t tid, uint8_t tileset, uint8_t grass_tile,
                              const bool walkable[256])
 {
+    if (tid == 0x7FU || (tileset != 0U && tid == 0x00U)) {
+        /* Blank space / indoor black room border void stays flat so it never blocks the camera. */
+        return (uint8_t)TILE_CLASS_GROUND;
+    }
     if (tid == 0x14U) {
         return (uint8_t)TILE_CLASS_WATER;
     }

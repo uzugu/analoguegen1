@@ -5,7 +5,7 @@
 #include <stdint.h>
 
 #ifndef AUDIO_SAMPLE_RATE
-#define AUDIO_SAMPLE_RATE 24000
+#define AUDIO_SAMPLE_RATE 12000
 #endif
 
 #ifndef MINIGB_APU_AUDIO_FORMAT_S16SYS
@@ -32,21 +32,24 @@ void gb_audio_push_frame(void)
         return;
     }
 
-    const int out_pairs = (int)(AUDIO_SAMPLES * 2u);
+    const unsigned repeat = (48000u / (unsigned)AUDIO_SAMPLE_RATE);
+    const unsigned mult = (repeat >= 1u && repeat <= 4u) ? repeat : 2u;
+    const int out_pairs = (int)(AUDIO_SAMPLES * mult);
     if (of_audio_free() < out_pairs) {
         return;
     }
 
     minigb_apu_audio_callback(&s_apu, s_audio_24k);
 
-    /* 2x nearest-neighbor upsample 24 kHz -> 48 kHz stereo (halves APU CPU cost). */
-    for (unsigned i = 0; i < AUDIO_SAMPLES; i++) {
+    /* Nearest-neighbor upsample AUDIO_SAMPLE_RATE -> 48 kHz stereo (e.g. 4x from 12 kHz). */
+    unsigned dst_idx = 0u;
+    for (unsigned i = 0u; i < AUDIO_SAMPLES; i++) {
         int16_t l = s_audio_24k[i * 2u];
         int16_t r = s_audio_24k[i * 2u + 1u];
-        s_audio_48k[i * 4u]      = l;
-        s_audio_48k[i * 4u + 1u] = r;
-        s_audio_48k[i * 4u + 2u] = l;
-        s_audio_48k[i * 4u + 3u] = r;
+        for (unsigned k = 0u; k < mult; k++) {
+            s_audio_48k[dst_idx++] = l;
+            s_audio_48k[dst_idx++] = r;
+        }
     }
 
     (void)of_audio_write(s_audio_48k, out_pairs);

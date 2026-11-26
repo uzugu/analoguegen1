@@ -159,14 +159,19 @@ int main(int argc, char **argv) {
         state.perf_gb_ms = (uint16_t)((of_time_us() - t_gb0) / 1000u);
         state.frame_count++;
 
-        renderer_begin_frame(RGB565(10, 14, 24));
-
         bool voxel_3d_active = state.rom_loaded &&
                                mod_manager_is_enabled("dramatic_shape") &&
                                state.voxel_pitch_deg > 0 &&
                                state.snap.in_overworld_ready &&
                                state.snap.in_battle == 0 &&
                                state.snap.ui_overlay != (uint8_t)UI_OVERLAY_FULLSCREEN_2D;
+
+        if (state.rom_loaded && !voxel_3d_active) {
+            /* 2D full-screen 2x2 blit overwrites every pixel; skip the 184 KB clear. */
+            renderer_begin_frame_noclear();
+        } else {
+            renderer_begin_frame(RGB565(10, 14, 24));
+        }
 
         unsigned int t_3d0 = of_time_us();
         mod_manager_on_render_3d(&state);

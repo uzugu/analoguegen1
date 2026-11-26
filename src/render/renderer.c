@@ -255,7 +255,7 @@ bool renderer_init(renderer_caps_t *out_caps) {
     return true;
 }
 
-void renderer_begin_frame(uint16_t clear_color) {
+void renderer_begin_frame_noclear(void) {
     if (s_rgb565_mode) {
         uint16_t *surf = of_video_surface16();
         if (surf) {
@@ -269,6 +269,10 @@ void renderer_begin_frame(uint16_t clear_color) {
         s_draw_fb = s_fb_rgb565;
         s_draw_stride = RENDER_W;
     }
+}
+
+void renderer_begin_frame(uint16_t clear_color) {
+    renderer_begin_frame_noclear();
 
     if (clear_color == 0u && s_draw_stride == RENDER_W) {
         memset(s_draw_fb, 0, (size_t)RENDER_W * RENDER_H * sizeof(uint16_t));
@@ -391,15 +395,26 @@ void renderer_blit_gb_lcd_2x(const uint16_t *lcd_rgb565, bool lcd_grid) {
                 }
             }
         } else {
-            /* Authentic DMG/Pocket 2x2 pixel matrix: subtle darkened right/bottom subpixels. */
-            for (int x = 0; x < GB_SRC_W; x++) {
-                const uint16_t c   = src[x];
-                const uint16_t dim = (uint16_t)(((c >> 1) & 0x7BEFu) + ((c >> 2) & 0x39E7u));
-                const int dx = x * 2;
-                row0[dx]     = c;
-                row0[dx + 1] = dim;
-                row1[dx]     = dim;
-                row1[dx + 1] = dim;
+            /* Subtle 144p GB LCD scanline matrix: ~6% darkening on the lower subpixel row only. */
+            if ((((uintptr_t)row0 & 3u) == 0u) && (((uintptr_t)row1 & 3u) == 0u)) {
+                fb_word_t *r0 = (fb_word_t *)(void *)row0;
+                fb_word_t *r1 = (fb_word_t *)(void *)row1;
+                for (int x = 0; x < GB_SRC_W; x++) {
+                    const uint16_t c   = src[x];
+                    const uint16_t dim = (uint16_t)(c - ((c >> 4) & 0x0861u));
+                    r0[x] = ((uint32_t)c << 16) | c;
+                    r1[x] = ((uint32_t)dim << 16) | dim;
+                }
+            } else {
+                for (int x = 0; x < GB_SRC_W; x++) {
+                    const uint16_t c   = src[x];
+                    const uint16_t dim = (uint16_t)(c - ((c >> 4) & 0x0861u));
+                    const int dx = x * 2;
+                    row0[dx]     = c;
+                    row0[dx + 1] = c;
+                    row1[dx]     = dim;
+                    row1[dx + 1] = dim;
+                }
             }
         }
     }

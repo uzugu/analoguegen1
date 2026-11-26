@@ -129,22 +129,27 @@ static void battle_mon_colors(uint8_t type1, uint8_t type2,
     }
 }
 
-static bool decode_vram_sprite_16x16(uint8_t img_idx, bool flip_x, uint16_t out_16x16[256],
+static bool decode_vram_sprite_16x16(uint8_t img_idx, bool flip_x, bool flip_bottom_x,
+                                     uint16_t out_16x16[256],
                                      uint16_t tint_shade1, uint16_t tint_shade2) {
+    if (img_idx == 0xFFu) {
+        return false;
+    }
     uint8_t base_tile = (uint8_t)(img_idx & 0xFCu);
-    if (base_tile > 124u) {
+    if (base_tile > 252u) {
         return false;
     }
 
     static const uint8_t quad_ox[4] = { 0u, 8u, 0u, 8u };
     static const uint8_t quad_oy[4] = { 0u, 0u, 8u, 8u };
-    const uint16_t outline_col = RGB565(32, 36, 44);
+    const uint16_t outline_col = RGB565(24, 28, 36);
     bool has_pixels = false;
 
     for (int q = 0; q < 4; q++) {
         const uint16_t tile_base = (uint16_t)(0x8000u + (uint16_t)((uint16_t)base_tile + (uint16_t)q) * 16u);
         const int ox = (int)quad_ox[q];
         const int oy = (int)quad_oy[q];
+        const bool q_flip = (q >= 2) ? (flip_x ^ flip_bottom_x) : flip_x;
 
         for (int py = 0; py < 8; py++) {
             const uint16_t row_addr = (uint16_t)(tile_base + (uint16_t)(py * 2));
@@ -166,7 +171,7 @@ static bool decode_vram_sprite_16x16(uint8_t img_idx, bool flip_x, uint16_t out_
                     has_pixels = true;
                 }
                 int dst_x = ox + px;
-                if (flip_x) {
+                if (q_flip) {
                     dst_x = 15 - dst_x;
                 }
                 out_16x16[(oy + py) * 16 + dst_x] = col;
@@ -246,11 +251,11 @@ static void mod_voxel_on_render_3d(const app_state_t *state) {
     float px = s_map_view.player_local_tx * 8.0f;
     float pz = s_map_view.player_local_ty * 8.0f;
 
-    /* Smooth sub-tile walk interpolation: wXCoord/wYCoord advance at step start while wWalkCounter counts 8 -> 0. */
+    /* Smooth sub-tile walk interpolation: wXCoord/wYCoord stay at old tile while wWalkCounter counts 8 -> 1, then advance at 0. */
     if (state->snap.in_battle == 0 && state->snap.walk_counter > 0 && state->snap.walk_counter <= 8) {
-        float frac = (float)state->snap.walk_counter / 8.0f;
-        px -= (float)state->snap.walk_dx * frac * 16.0f;
-        pz -= (float)state->snap.walk_dy * frac * 16.0f;
+        float frac = (float)(8 - state->snap.walk_counter) / 8.0f;
+        px += (float)state->snap.walk_dx * frac * 16.0f;
+        pz += (float)state->snap.walk_dy * frac * 16.0f;
     }
 
     r3d_camera_t cam;
@@ -300,12 +305,15 @@ static void mod_voxel_on_render_3d(const app_state_t *state) {
         return;
     }
 
-    /* Player billboard (Red: live 16x16 VRAM sprite with East horizontal mirror) */
+    /* Player billboard (Red: live 16x16 VRAM sprite with walk animation & leg alternation) */
     uint16_t spr_tex[256];
-    const uint8_t red_img = gb_brain_read8((uint16_t)(GB_ADDR_SPRITE_DATA1 + GB_SPRITE1_IMAGE_INDEX));
-    const bool red_flip = (state->snap.facing_dir == 12u);
+    const uint8_t red_img  = gb_brain_read8((uint16_t)(GB_ADDR_SPRITE_DATA1 + GB_SPRITE1_IMAGE_INDEX));
+    const uint8_t red_anim = gb_brain_read8((uint16_t)(GB_ADDR_SPRITE_DATA1 + 0x08u));
+    const bool red_flip    = (state->snap.facing_dir == 12u);
+    const bool red_legflip = ((state->snap.facing_dir == 0u || state->snap.facing_dir == 4u) &&
+                              red_anim == 3u);
     if (red_img != 0xFFu &&
-        decode_vram_sprite_16x16(red_img, red_flip, spr_tex, RGB565(248, 224, 192), RGB565(224, 48, 48))) {
+        decode_vram_sprite_16x16(red_img, red_flip, red_legflip, spr_tex, RGB565(248, 224, 192), RGB565(224, 48, 48))) {
         r3d_draw_sprite_billboard(px, 0.0f, pz, 14.0f, 16.0f, spr_tex, 16, 16, false);
     } else {
         r3d_draw_billboard(px, 0.0f, pz, 10.0f, 14.0f,
@@ -326,13 +334,15 @@ static void mod_voxel_on_render_3d(const app_state_t *state) {
         float nx = s_map_view.player_local_tx * 8.0f + (float)(dx * 16);
         float nz = s_map_view.player_local_ty * 8.0f + (float)(dy * 16);
         const uint16_t off = (uint16_t)((i + 1) * 16);
-        const uint8_t npc_img = gb_brain_read8((uint16_t)(GB_ADDR_SPRITE_DATA1 + off + GB_SPRITE1_IMAGE_INDEX));
+        const uint8_t npc_img  = gb_brain_read8((uint16_t)(GB_ADDR_SPRITE_DATA1 + off + GB_SPRITE1_IMAGE_INDEX));
+        const uint8_t npc_anim = gb_brain_read8((uint16_t)(GB_ADDR_SPRITE_DATA1 + off + 0x08u));
         if (npc_img == 0xFFu) {
             continue; /* hidden / off-screen sprite */
         }
-        const bool npc_flip = (npc->facing_dir == 12u);
-        if (npc_img < 124u &&
-            decode_vram_sprite_16x16(npc_img, npc_flip, spr_tex, RGB565(244, 218, 184), RGB565(72, 148, 224))) {
+        const bool npc_flip    = (npc->facing_dir == 12u);
+        const bool npc_legflip = ((npc->facing_dir == 0u || npc->facing_dir == 4u) &&
+                                  npc_anim == 3u);
+        if (decode_vram_sprite_16x16(npc_img, npc_flip, npc_legflip, spr_tex, RGB565(244, 218, 184), RGB565(72, 148, 224))) {
             r3d_draw_sprite_billboard(nx, 0.0f, nz, 14.0f, 16.0f, spr_tex, 16, 16, false);
         } else {
             r3d_draw_billboard(nx, 0.0f, nz, 10.0f, 13.0f,

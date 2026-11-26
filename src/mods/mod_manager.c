@@ -46,12 +46,12 @@ static int step_voxel_pitch(int current_deg, int dir) {
 static const char *gb_filter_name(uint8_t mode) {
     switch (mode) {
         case 1u: return "POCKET";
-        case 2u: return "SGB RED";
-        case 3u: return "B&W";
-        case 4u: return "DMG+GRID";
-        case 5u: return "PKT+GRID";
+        case 2u: return "GB LIGHT";
+        case 3u: return "SGB RED";
+        case 4u: return "DMG+LCD";
+        case 5u: return "PKT+LCD";
         case 0u:
-        default: return "DMG";
+        default: return "DMG-01";
     }
 }
 

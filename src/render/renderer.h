@@ -20,6 +20,7 @@ typedef struct {
 
 bool renderer_init(renderer_caps_t *out_caps);
 void renderer_begin_frame(uint16_t clear_color);
+void renderer_begin_frame_noclear(void);
 void renderer_end_frame(void);
 
 /* Blit 160x144 RGB565 Game Boy LCD centered (1x), exact 2x2 (320x288) with optional LCD grid, or scaled. */

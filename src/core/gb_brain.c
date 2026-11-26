@@ -109,12 +109,12 @@ static void gb_error_cb(struct gb_s *g, const enum gb_error_e err, const uint16_
 
 static void lcd_draw_line(struct gb_s *g, const uint8_t *pixels, const uint_fast8_t line)
 {
-    /* 4 Game Boy palettes (0=DMG Green, 1=Pocket Olive, 2=SGB Red, 3=Crisp B&W). */
+    /* 4 Game Boy palettes (0=DMG-01 Green, 1=GB Pocket, 2=GB Light Teal, 3=SGB Red). */
     static const uint16_t k_palettes[4][4] = {
-        { 0xE7DAU, 0x8E0EU, 0x334AU, 0x08C4U }, /* 0/4: DMG Pea-Green */
-        { 0xEF5BU, 0xAD93U, 0x5B0AU, 0x1903U }, /* 1/5: Game Boy Pocket */
-        { 0xFFBCU, 0xF4CFU, 0xAA08U, 0x20C3U }, /* 2:   SGB Pokemon Red */
-        { 0xFFFFU, 0xAD55U, 0x52AAU, 0x1082U }  /* 3:   Crisp B&W */
+        { 0x9DE3U, 0x8562U, 0x3306U, 0x09C2U }, /* 0/4: Authentic DMG-01 Olive-Green */
+        { 0xCF78U, 0x9CD1U, 0x5289U, 0x10A2U }, /* 1/5: Authentic Game Boy Pocket */
+        { 0x07F8U, 0x05D2U, 0x038CU, 0x0186U }, /* 2:   Game Boy Light Backlight */
+        { 0xFFBCU, 0xF4CFU, 0xAA08U, 0x20C3U }  /* 3:   SGB Pokemon Red */
     };
     const uint16_t *pal;
     uint8_t pal_idx;
