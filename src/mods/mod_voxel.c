@@ -71,6 +71,13 @@ static void mod_voxel_on_render_3d(const app_state_t *state) {
     float px = s_map_view.player_local_tx * 8.0f;
     float pz = s_map_view.player_local_ty * 8.0f;
 
+    /* Smooth sub-tile walk interpolation when walk_counter is active (8..1 -> 0..16px) */
+    if (state->snap.walk_counter > 0 && state->snap.walk_counter <= 8) {
+        float frac = (float)(8 - state->snap.walk_counter) / 8.0f;
+        px += (float)state->snap.walk_dx * frac * 16.0f;
+        pz += (float)state->snap.walk_dy * frac * 16.0f;
+    }
+
     r3d_camera_t cam;
     cam.target_x  = px;
     cam.target_y  = 4.0f;
@@ -87,6 +94,23 @@ static void mod_voxel_on_render_3d(const app_state_t *state) {
     r3d_draw_billboard(px, 0.0f, pz, 10.0f, 14.0f,
                        RGB565(220, 48, 48), RGB565(245, 220, 185), true);
 
+    /* Live NPC billboards from wSpriteStateData1/2 */
+    for (int i = 0; i < APP_MAX_NPCS; i++) {
+        const npc_snap_t *npc = &state->snap.npcs[i];
+        if (!npc->active) {
+            continue;
+        }
+        int dx = (int)npc->map_x - (int)state->snap.player_x;
+        int dy = (int)npc->map_y - (int)state->snap.player_y;
+        if (dx < -6 || dx > 6 || dy < -5 || dy > 5) {
+            continue;
+        }
+        float nx = s_map_view.player_local_tx * 8.0f + (float)(dx * 16);
+        float nz = s_map_view.player_local_ty * 8.0f + (float)(dy * 16);
+        r3d_draw_billboard(nx, 0.0f, nz, 10.0f, 13.0f,
+                           RGB565(72, 148, 224), RGB565(240, 210, 175), true);
+    }
+
     /* Optional PokéPC Follower billboard one tile behind player */
     if (mod_manager_is_enabled("pokepc_followers") &&
         state->snap.party_count > 0 && state->snap.lead_species != 0) {
@@ -99,8 +123,6 @@ static void mod_voxel_on_render_3d(const app_state_t *state) {
                                RGB565(248, 208, 48), RGB565(220, 72, 48), true);
         }
     }
-
-    r3d_end_scene();
 }
 
 static void mod_voxel_on_render_hud(const app_state_t *state) {

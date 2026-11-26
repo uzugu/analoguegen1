@@ -16,6 +16,8 @@ void mod_manager_init(app_state_t *state) {
     mod_voxel_register();
     mod_moveinfo_register();
     mod_followers_register();
+    mod_wilds_register();
+    mod_gen3box_register();
 
     for (int i = 0; i < s_mod_count; i++) {
         if (s_mods[i].init != NULL) {

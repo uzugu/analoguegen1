@@ -1,4 +1,5 @@
 #include "gb_brain.h"
+#include "gb_audio.h"
 #include "pokered_ram.h"
 
 #include <stdio.h>
@@ -20,6 +21,16 @@
 #ifndef PEANUT_GB_HIGH_LCD_ACCURACY
 #define PEANUT_GB_HIGH_LCD_ACCURACY 0
 #endif
+
+uint8_t audio_read(const uint16_t addr)
+{
+    return gb_audio_read(addr);
+}
+
+void audio_write(const uint16_t addr, const uint8_t val)
+{
+    gb_audio_write(addr, val);
+}
 
 #include "peanut_gb.h"
 
@@ -259,13 +270,19 @@ void gb_brain_run_frame(app_state_t *state)
     uint8_t new_y;
     uint8_t dv_atk_def;
     uint8_t dv_spd_spc;
+    uint8_t box_cnt;
+    uint8_t row12_col0;
+    uint8_t row12_col1;
+    uint8_t start_border;
     unsigned int i;
+    unsigned int s;
 
     if (!initialized) {
         return;
     }
 
     gb_run_frame(&gb);
+    gb_audio_push_frame();
 
     if (state == NULL) {
         return;
@@ -287,9 +304,49 @@ void gb_brain_run_frame(app_state_t *state)
 
     state->snap.facing_dir = gb_brain_read8((uint16_t)(GB_ADDR_SPRITE_DATA1 + GB_SPRITE1_FACING_DIR));
     state->snap.walk_counter = gb_brain_read8(GB_ADDR_WALK_COUNTER);
+    state->snap.walk_dx = (int8_t)gb_brain_read8((uint16_t)(GB_ADDR_SPRITE_DATA1 + GB_SPRITE1_X_STEP_VEC));
+    state->snap.walk_dy = (int8_t)gb_brain_read8((uint16_t)(GB_ADDR_SPRITE_DATA1 + GB_SPRITE1_Y_STEP_VEC));
     state->snap.in_battle = gb_brain_read8(GB_ADDR_IS_IN_BATTLE);
     state->snap.party_count = gb_brain_read8(GB_ADDR_PARTY_COUNT);
     state->snap.lead_species = gb_brain_read8(GB_ADDR_PARTY_SPECIES);
+    for (i = 0U; i < 6U; i++) {
+        state->snap.party_species[i] = gb_brain_read8((uint16_t)(GB_ADDR_PARTY_SPECIES + i));
+    }
+
+    state->snap.cur_box_num = (uint8_t)(gb_brain_read8(GB_ADDR_CUR_BOX) & 0x7FU);
+    box_cnt = gb_brain_read8(GB_ADDR_BOX_COUNT);
+    if (box_cnt > APP_MAX_BOX_MONS) {
+        box_cnt = APP_MAX_BOX_MONS;
+    }
+    state->snap.box_count = box_cnt;
+    for (i = 0U; i < APP_MAX_BOX_MONS; i++) {
+        state->snap.box_species[i] = gb_brain_read8((uint16_t)(GB_ADDR_BOX_SPECIES + i));
+    }
+
+    row12_col0 = gb_brain_read8((uint16_t)(GB_ADDR_TILEMAP + (12U * 20U)));
+    row12_col1 = gb_brain_read8((uint16_t)(GB_ADDR_TILEMAP + (12U * 20U) + 1U));
+    start_border = gb_brain_read8((uint16_t)(GB_ADDR_TILEMAP + 10U));
+    state->snap.dialogue_open = (row12_col0 == 0x79U || row12_col0 == 0x7AU ||
+                                 row12_col1 == 0x7AU || start_border == 0x79U);
+
+    for (s = 0U; s < APP_MAX_NPCS; s++) {
+        uint16_t off = (uint16_t)((s + 1U) * 16U);
+        uint8_t pic = gb_brain_read8((uint16_t)(GB_ADDR_SPRITE_DATA1 + off + GB_SPRITE1_PICTURE_ID));
+        if (pic != 0U) {
+            state->snap.npcs[s].active = true;
+            state->snap.npcs[s].picture_id = pic;
+            state->snap.npcs[s].facing_dir = gb_brain_read8((uint16_t)(GB_ADDR_SPRITE_DATA1 + off + GB_SPRITE1_FACING_DIR));
+            state->snap.npcs[s].map_y = (uint8_t)(gb_brain_read8((uint16_t)(GB_ADDR_SPRITE_DATA2 + off + GB_SPRITE2_MAP_Y)) - 4U);
+            state->snap.npcs[s].map_x = (uint8_t)(gb_brain_read8((uint16_t)(GB_ADDR_SPRITE_DATA2 + off + GB_SPRITE2_MAP_X)) - 4U);
+        } else {
+            state->snap.npcs[s].active = false;
+            state->snap.npcs[s].picture_id = 0U;
+            state->snap.npcs[s].facing_dir = 0U;
+            state->snap.npcs[s].map_x = 0U;
+            state->snap.npcs[s].map_y = 0U;
+        }
+    }
+
     state->snap.enemy_species = gb_brain_read8(GB_ADDR_ENEMY_MON_SPECIES);
     state->snap.enemy_type1 = gb_brain_read8(GB_ADDR_ENEMY_MON_TYPE1);
     state->snap.enemy_type2 = gb_brain_read8(GB_ADDR_ENEMY_MON_TYPE2);

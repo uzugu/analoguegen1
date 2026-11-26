@@ -209,6 +209,8 @@ static void r3d_rasterize_tri(const r3d_proj_vert_t *p0,
     const float v1 = p1->v;
     const float v2 = p2->v;
 
+    const bool use_sw_z = !renderer_has_hw_tri();
+
     for (int y = min_y; y <= max_y; y++) {
         float b0 = b0_row;
         float b1 = b1_row;
@@ -230,7 +232,7 @@ static void r3d_rasterize_tri(const r3d_proj_vert_t *p0,
                 }
                 const uint16_t depth = (uint16_t)(zf + 0.5f);
 
-                if (depth < z_row[x]) {
+                if (!use_sw_z || depth < z_row[x]) {
                     uint16_t out_col = shade_rgb;
 
                     if (has_tex) {
@@ -251,7 +253,9 @@ static void r3d_rasterize_tri(const r3d_proj_vert_t *p0,
                         out_col = identity_shade ? texel : r3d_modulate_rgb565(texel, sr8, sg8, sb8);
                     }
 
-                    z_row[x]  = depth;
+                    if (use_sw_z) {
+                        z_row[x] = depth;
+                    }
                     fb_row[x] = out_col;
                 }
             } else if (entered) {
@@ -306,7 +310,8 @@ void r3d_init(void) {
 }
 
 void r3d_begin_scene(uint16_t sky_color) {
-    memset(s_zbuf, 0xFF, sizeof(s_zbuf));
+    /* Hardware Z_TEST_WRITE tests GEQUAL on 1/w depth (0 = far); SW tests < on linear depth (0xFFFF = far). */
+    memset(s_zbuf, renderer_has_hw_tri() ? 0 : 0xFF, sizeof(s_zbuf));
 
     int stride = RENDER_W;
     uint16_t *fb = renderer_get_draw_fb(&stride);
@@ -419,6 +424,79 @@ void r3d_draw_mesh(const voxel_mesh_t *mesh, const uint16_t *atlas_rgb565, int a
     int count = mesh->tri_count;
     if (count > VOXEL_MAX_TRIS) {
         count = VOXEL_MAX_TRIS;
+    }
+
+    if (renderer_has_hw_tri() && atlas_rgb565 != NULL && atlas_w > 0 && atlas_h > 0) {
+        renderer_hw_tri_begin(atlas_rgb565, atlas_w, atlas_h, s_zbuf);
+
+        for (int i = 0; i < count; i++) {
+            const voxel_tri_t *tri = &mesh->tris[i];
+            float sx[3], sy[3], vz[3];
+            bool visible = true;
+
+            for (int k = 0; k < 3; k++) {
+                const voxel_vert_t *in = &tri->v[k];
+                const float vx = s_view[0][0] * in->x + s_view[0][1] * in->y + s_view[0][2] * in->z + s_view[0][3];
+                const float vy = s_view[1][0] * in->x + s_view[1][1] * in->y + s_view[1][2] * in->z + s_view[1][3];
+                const float vzk = s_view[2][0] * in->x + s_view[2][1] * in->y + s_view[2][2] * in->z + s_view[2][3];
+
+                if (vzk >= -R3D_NEAR) {
+                    visible = false;
+                    break;
+                }
+
+                const float inv_w = 1.0f / (s_proj[3][2] * vzk);
+                const float ndc_x = (s_proj[0][0] * vx) * inv_w;
+                const float ndc_y = (s_proj[1][1] * vy) * inv_w;
+
+                sx[k] = (ndc_x + 1.0f) * (0.5f * (float)RENDER_W);
+                sy[k] = (1.0f - ndc_y) * (0.5f * (float)RENDER_H);
+                vz[k] = vzk;
+            }
+
+            if (!visible) {
+                continue;
+            }
+            if (-vz[0] >= R3D_FAR && -vz[1] >= R3D_FAR && -vz[2] >= R3D_FAR) {
+                continue;
+            }
+            if (r3d_edge_fn(sx[0], sy[0], sx[1], sy[1], sx[2], sy[2]) <= 1e-4f) {
+                continue;
+            }
+            if ((sx[0] < 0.0f && sx[1] < 0.0f && sx[2] < 0.0f) ||
+                (sx[0] >= (float)RENDER_W && sx[1] >= (float)RENDER_W && sx[2] >= (float)RENDER_W) ||
+                (sy[0] < 0.0f && sy[1] < 0.0f && sy[2] < 0.0f) ||
+                (sy[0] >= (float)RENDER_H && sy[1] >= (float)RENDER_H && sy[2] >= (float)RENDER_H)) {
+                continue;
+            }
+
+            int16_t  x[3], y[3];
+            int32_t  s[3], t[3], zi[3], depth[3];
+            uint16_t rgb[3];
+
+            for (int k = 0; k < 3; k++) {
+                float sxc = sx[k];
+                float syc = sy[k];
+                if (sxc < -2047.0f) sxc = -2047.0f;
+                else if (sxc > 2047.0f) sxc = 2047.0f;
+                if (syc < -2047.0f) syc = -2047.0f;
+                else if (syc > 2047.0f) syc = 2047.0f;
+
+                const float inv_z = 1.0f / (-vz[k]);
+                x[k]     = (int16_t)(sxc * 16.0f);
+                y[k]     = (int16_t)syc;
+                s[k]     = (int32_t)(tri->v[k].u * 65536.0f);
+                t[k]     = (int32_t)(tri->v[k].v * 65536.0f);
+                zi[k]    = (int32_t)(inv_z * 65536.0f);
+                depth[k] = (int32_t)(inv_z * 1073741824.0f);
+                rgb[k]   = tri->v[k].rgb;
+            }
+
+            renderer_hw_tri_submit(x, y, s, t, zi, rgb, depth);
+        }
+
+        renderer_hw_tri_end();
+        return;
     }
 
     for (int i = 0; i < count; i++) {

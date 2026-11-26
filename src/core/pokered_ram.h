@@ -29,6 +29,16 @@
 #define GB_SPRITE1_X_STEP_VEC        0x05
 #define GB_SPRITE1_X_PIXELS          0x06
 #define GB_SPRITE1_FACING_DIR        0x09    /* 0=down, 4=up, 8=left, 12=right */
+#define GB_SPRITE2_MAP_Y             0x04    /* map Y + 4 in 16x16 cells */
+#define GB_SPRITE2_MAP_X             0x05    /* map X + 4 in 16x16 cells */
+
+/* Encounter / Repel / PC Box (WRAM) */
+#define GB_ADDR_CUR_OPPONENT         0xD059  /* species (<200) or trainer (+200) */
+#define GB_ADDR_REPEL_STEPS          0xD0DB  /* uint8_t wRepelRemainingSteps */
+#define GB_ADDR_CUR_ENEMY_LEVEL      0xD127  /* uint8_t wCurEnemyLevel */
+#define GB_ADDR_CUR_BOX              0xD5A0  /* bits 0..6 = active box 0..11 */
+#define GB_ADDR_BOX_COUNT            0xDA80  /* uint8_t wBoxCount (0..20) */
+#define GB_ADDR_BOX_SPECIES          0xDA81  /* 20 bytes: internal species IDs */
 
 /* Battle state */
 #define GB_ADDR_IS_IN_BATTLE         0xD057  /* 0=overworld, 1=wild, 2=trainer */

@@ -2,9 +2,11 @@
 
 #include "of.h"
 #include "app_state.h"
+#include "gb_audio.h"
 #include "gb_brain.h"
 #include "mod_manager.h"
 #include "renderer.h"
+#include "renderer3d.h"
 
 #include <stdbool.h>
 #include <stdio.h>
@@ -88,6 +90,7 @@ int main(int argc, char **argv) {
     }
     (void)caps;
 
+    gb_audio_init();
     gb_brain_init(rom_path, &state);
     mod_manager_init(&state);
 
@@ -99,6 +102,8 @@ int main(int argc, char **argv) {
 
         bool lr_combo = (of_btn(OF_BTN_L1) && of_btn_pressed(OF_BTN_R1)) ||
                         (of_btn(OF_BTN_R1) && of_btn_pressed(OF_BTN_L1));
+        bool box_combo = (of_btn(OF_BTN_R1) && of_btn_pressed(OF_BTN_SELECT)) ||
+                         (of_btn(OF_BTN_SELECT) && of_btn_pressed(OF_BTN_R1));
         bool menu_toggle = lr_combo ||
                            of_btn_pressed(OF_BTN_X) ||
                            of_btn_pressed(OF_BTN_Y);
@@ -114,9 +119,24 @@ int main(int argc, char **argv) {
             gb_input_t empty_in;
             memset(&empty_in, 0, sizeof(empty_in));
             gb_brain_set_input(&empty_in);
+        } else if (state.gen3box_open) {
+            bool up     = of_btn_pressed(OF_BTN_UP);
+            bool down   = of_btn_pressed(OF_BTN_DOWN);
+            bool left   = of_btn_pressed(OF_BTN_LEFT);
+            bool right  = of_btn_pressed(OF_BTN_RIGHT);
+            bool action = of_btn_pressed(OF_BTN_A);
+            bool close  = box_combo || of_btn_pressed(OF_BTN_B);
+
+            mod_gen3box_input(&state, up, down, left, right, action, close);
+
+            gb_input_t empty_in;
+            memset(&empty_in, 0, sizeof(empty_in));
+            gb_brain_set_input(&empty_in);
         } else {
             if (menu_toggle) {
                 state.mods_menu_open = true;
+            } else if (box_combo && mod_manager_is_enabled("gen3_box")) {
+                state.gen3box_open = true;
             } else if (of_btn_pressed(OF_BTN_L1) && !of_btn(OF_BTN_R1)) {
                 state.voxel_pitch_deg = cycle_voxel_pitch(state.voxel_pitch_deg);
             }
@@ -150,6 +170,9 @@ int main(int argc, char **argv) {
                                state.snap.map_h > 0;
 
         mod_manager_on_render_3d(&state);
+        if (voxel_3d_active) {
+            r3d_end_scene();
+        }
 
         if (state.rom_loaded) {
             if (!voxel_3d_active) {
@@ -157,6 +180,10 @@ int main(int argc, char **argv) {
                                    GB_LCD_W + 2, GB_LCD_H + 2,
                                    RGB565(65, 95, 140));
                 renderer_blit_gb_lcd(gb_brain_get_lcd_rgb565(), gb_dst_x, gb_dst_y);
+            } else if (state.snap.dialogue_open) {
+                /* Composite authentic GB bottom dialogue box (rows 96..143) over 3D scene */
+                renderer_draw_rect(gb_dst_x - 1, 147, GB_LCD_W + 2, 50, RGB565(220, 228, 240));
+                renderer_blit_gb_subrect(gb_brain_get_lcd_rgb565(), 0, 96, GB_LCD_W, 48, gb_dst_x, 148);
             }
         } else {
             render_missing_rom_screen(rom_path);
@@ -165,6 +192,9 @@ int main(int argc, char **argv) {
         mod_manager_on_render_hud(&state);
         render_footer_bar(&state);
 
+        if (state.gen3box_open) {
+            mod_gen3box_render(&state);
+        }
         if (state.mods_menu_open) {
             mod_manager_menu_render(&state);
         }

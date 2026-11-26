@@ -5,6 +5,7 @@
 
 #include "of.h"
 #ifndef OF_PC
+#include "of_cache.h"
 #include "of_gpu.h"
 #endif
 
@@ -26,6 +27,9 @@ static uint16_t s_fb_stride_bytes = RENDER_W;
 static uint16_t *s_draw_fb     = s_fb_rgb565;
 static uint16_t  s_draw_stride = RENDER_W;
 static bool      s_hw_tri      = false;
+#ifndef OF_PC
+static bool      s_hw_tri_active = false;
+#endif
 
 /* Compact 5x7 ASCII bitmap font for ASCII 32..126 (column-major, LSB = top row). */
 static const uint8_t s_font5x7[95][FONT_W] = {
@@ -433,4 +437,142 @@ uint16_t *renderer_get_draw_fb(int *out_stride_px) {
 
 bool renderer_has_hw_tri(void) {
     return s_hw_tri;
+}
+
+void renderer_blit_gb_subrect(const uint16_t *lcd_rgb565,
+                              int src_x, int src_y, int src_w, int src_h,
+                              int dst_x, int dst_y) {
+    if (!lcd_rgb565 || !s_draw_fb || src_w <= 0 || src_h <= 0) {
+        return;
+    }
+
+    /* Clip against source Game Boy LCD bounds [0..160) x [0..144). */
+    if (src_x < 0) {
+        int delta = -src_x;
+        src_x = 0;
+        dst_x += delta;
+        src_w -= delta;
+    }
+    if (src_y < 0) {
+        int delta = -src_y;
+        src_y = 0;
+        dst_y += delta;
+        src_h -= delta;
+    }
+    if (src_x >= GB_SRC_W || src_y >= GB_SRC_H) {
+        return;
+    }
+    if (src_w > GB_SRC_W - src_x) {
+        src_w = GB_SRC_W - src_x;
+    }
+    if (src_h > GB_SRC_H - src_y) {
+        src_h = GB_SRC_H - src_y;
+    }
+    if (src_w <= 0 || src_h <= 0) {
+        return;
+    }
+
+    /* Clip against destination framebuffer bounds [0..320) x [0..240). */
+    if (dst_x < 0) {
+        int delta = -dst_x;
+        dst_x = 0;
+        src_x += delta;
+        src_w -= delta;
+    }
+    if (dst_y < 0) {
+        int delta = -dst_y;
+        dst_y = 0;
+        src_y += delta;
+        src_h -= delta;
+    }
+    if (dst_x >= RENDER_W || dst_y >= RENDER_H) {
+        return;
+    }
+    if (src_w > RENDER_W - dst_x) {
+        src_w = RENDER_W - dst_x;
+    }
+    if (src_h > RENDER_H - dst_y) {
+        src_h = RENDER_H - dst_y;
+    }
+    if (src_w <= 0 || src_h <= 0) {
+        return;
+    }
+
+    for (int y = 0; y < src_h; y++) {
+        const uint16_t *src = lcd_rgb565 + (uint32_t)(src_y + y) * GB_SRC_W + src_x;
+        uint16_t *dst = s_draw_fb + (uint32_t)(dst_y + y) * s_draw_stride + dst_x;
+        memcpy(dst, src, (size_t)src_w * sizeof(uint16_t));
+    }
+}
+
+void renderer_hw_tri_begin(const uint16_t *atlas_rgb565, int atlas_w, int atlas_h, uint16_t *zbuf_16) {
+#ifndef OF_PC
+    s_hw_tri_active = false;
+    if (!s_hw_tri || !s_rgb565_mode || !s_draw_fb || !atlas_rgb565 || !zbuf_16 ||
+        atlas_w <= 0 || atlas_h <= 0) {
+        return;
+    }
+
+    of_cache_flush_range((void *)(uintptr_t)atlas_rgb565, (uint32_t)(atlas_w * atlas_h * 2));
+    of_cache_flush_range((void *)zbuf_16, (uint32_t)(RENDER_W * RENDER_H * 2));
+    of_cache_flush_range((void *)s_draw_fb, (uint32_t)(RENDER_W * RENDER_H * 2));
+
+    of_gpu_tri_state_t st;
+    memset(&st, 0, sizeof(st));
+    st.fb_base       = (uint32_t)(uintptr_t)s_draw_fb;
+    st.fb_major_step = (int32_t)s_fb_stride_bytes;
+    st.fb_minor_step = 2;
+    st.tex_addr      = (uint32_t)(uintptr_t)atlas_rgb565;
+    st.tex_width     = (uint16_t)atlas_w;
+    st.tex_w_mask    = (uint16_t)(atlas_w - 1);
+    st.tex_h_mask    = (uint16_t)(atlas_h - 1);
+    st.z_base        = (uint32_t)(uintptr_t)zbuf_16;
+    st.z_major_step  = RENDER_W * 2;
+    st.z_minor_step  = 2;
+    st.z_mode        = OF_GPU_PARAM_Z_TEST_WRITE;
+    st.flags         = OF_GPU_SPAN_TRUECOLOR | OF_GPU_SPAN_PERSP;
+    st.clip_x0       = 0;
+    st.clip_x1       = RENDER_W - 1;
+    st.clip_y0       = 0;
+    st.clip_y1       = RENDER_H - 1;
+
+    of_gpu_set_tri_state(&st);
+    s_hw_tri_active = true;
+#else
+    (void)atlas_rgb565;
+    (void)atlas_w;
+    (void)atlas_h;
+    (void)zbuf_16;
+#endif
+}
+
+void renderer_hw_tri_submit(const int16_t x[3], const int16_t y[3],
+                            const int32_t s[3], const int32_t t[3],
+                            const int32_t zi[3], const uint16_t rgb[3],
+                            const int32_t depth[3]) {
+#ifndef OF_PC
+    if (!s_hw_tri_active) {
+        return;
+    }
+    of_gpu_draw_vert_tri_rgb(x, y, s, t, zi, rgb, 0u, depth, NULL);
+#else
+    (void)x;
+    (void)y;
+    (void)s;
+    (void)t;
+    (void)zi;
+    (void)rgb;
+    (void)depth;
+#endif
+}
+
+void renderer_hw_tri_end(void) {
+#ifndef OF_PC
+    if (!s_hw_tri_active) {
+        return;
+    }
+    of_gpu_finish();
+    of_cache_inval_range((void *)s_draw_fb, (uint32_t)(RENDER_W * RENDER_H * 2));
+    s_hw_tri_active = false;
+#endif
 }

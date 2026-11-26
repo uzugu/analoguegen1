@@ -37,9 +37,15 @@ void mod_manager_on_render_hud(const app_state_t *state);
 void mod_manager_menu_input(app_state_t *state, bool up, bool down, bool toggle, bool close);
 void mod_manager_menu_render(const app_state_t *state);
 
-/* Built-in Phase 1 mod registrars */
+/* Built-in mod registrars */
 void mod_voxel_register(void);
 void mod_moveinfo_register(void);
 void mod_followers_register(void);
+void mod_wilds_register(void);
+void mod_gen3box_register(void);
+
+/* Gen 3 Box interactive UI hooks */
+void mod_gen3box_input(app_state_t *state, bool up, bool down, bool left, bool right, bool action, bool close);
+void mod_gen3box_render(const app_state_t *state);
 
 #endif /* MOD_MANAGER_H */

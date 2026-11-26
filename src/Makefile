@@ -3,6 +3,7 @@
 ROOT        := $(abspath $(CURDIR)/..)
 SDK_DIR     := $(ROOT)/third_party/openfpgaSDK/src/sdk
 PEANUT_DIR  := $(ROOT)/third_party/Peanut-GB
+APU_DIR     := $(PEANUT_DIR)/examples/sdl2/minigb_apu
 BUILD_DIR   := $(ROOT)/build
 OBJ_DIR     := $(BUILD_DIR)/obj
 
@@ -12,6 +13,7 @@ OF_SDK_IN_CONTAINER := 1
 SRCS := \
 	main.c \
 	core/gb_brain.c \
+	core/gb_audio.c \
 	core/gb_map.c \
 	voxel/voxel_mesher.c \
 	render/renderer.c \
@@ -19,10 +21,14 @@ SRCS := \
 	mods/mod_manager.c \
 	mods/mod_voxel.c \
 	mods/mod_moveinfo.c \
-	mods/mod_followers.c
+	mods/mod_followers.c \
+	mods/mod_wilds.c \
+	mods/mod_gen3box.c \
+	$(APU_DIR)/minigb_apu.c
 
-CFLAGS += -I$(CURDIR) -I$(CURDIR)/core -I$(CURDIR)/voxel -I$(CURDIR)/render -I$(CURDIR)/mods -I$(PEANUT_DIR)
-CFLAGS += -DENABLE_SOUND=0 -DENABLE_LCD=1 -DPEANUT_GB_12_COLOUR=0 -DPEANUT_GB_HIGH_LCD_ACCURACY=0
+CFLAGS += -I$(CURDIR) -I$(CURDIR)/core -I$(CURDIR)/voxel -I$(CURDIR)/render -I$(CURDIR)/mods -I$(PEANUT_DIR) -I$(APU_DIR)
+CFLAGS += -DENABLE_SOUND=1 -DAUDIO_SAMPLE_RATE=48000 -DMINIGB_APU_AUDIO_FORMAT_S16SYS
+CFLAGS += -DENABLE_LCD=1 -DPEANUT_GB_12_COLOUR=0 -DPEANUT_GB_HIGH_LCD_ACCURACY=0
 
 .DEFAULT_GOAL := pocket
 
