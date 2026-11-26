@@ -35,6 +35,9 @@ void gb_brain_run_frame(app_state_t *state);
 uint8_t gb_brain_read8(uint16_t addr);
 void    gb_brain_write8(uint16_t addr, uint8_t val);
 
+/* Read a byte from a specific ROM bank (bank 0: 0x0000..0x3FFF, bank N: 0x4000..0x7FFF). */
+uint8_t gb_brain_read_rom_bank(uint8_t bank, uint16_t addr);
+
 /* Pointer to the 160x144 RGB565 software LCD buffer produced by Peanut-GB. */
 const uint16_t *gb_brain_get_lcd_rgb565(void);
 

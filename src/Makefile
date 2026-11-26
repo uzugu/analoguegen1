@@ -12,13 +12,16 @@ OF_SDK_IN_CONTAINER := 1
 SRCS := \
 	main.c \
 	core/gb_brain.c \
+	core/gb_map.c \
+	voxel/voxel_mesher.c \
 	render/renderer.c \
+	render/renderer3d.c \
 	mods/mod_manager.c \
 	mods/mod_voxel.c \
 	mods/mod_moveinfo.c \
 	mods/mod_followers.c
 
-CFLAGS += -I$(CURDIR) -I$(CURDIR)/core -I$(CURDIR)/render -I$(CURDIR)/mods -I$(PEANUT_DIR)
+CFLAGS += -I$(CURDIR) -I$(CURDIR)/core -I$(CURDIR)/voxel -I$(CURDIR)/render -I$(CURDIR)/mods -I$(PEANUT_DIR)
 CFLAGS += -DENABLE_SOUND=0 -DENABLE_LCD=1 -DPEANUT_GB_12_COLOUR=0 -DPEANUT_GB_HIGH_LCD_ACCURACY=0
 
 .DEFAULT_GOAL := pocket

@@ -322,6 +322,22 @@ void gb_brain_write8(uint16_t addr, uint8_t val)
     __gb_write(&gb, addr, val);
 }
 
+uint8_t gb_brain_read_rom_bank(uint8_t bank, uint16_t addr)
+{
+    size_t offset;
+    if (!initialized || rom_data == NULL || rom_size == 0U) {
+        return 0xFFU;
+    }
+    if (addr < 0x4000U) {
+        offset = (size_t)addr;
+    } else if (addr < 0x8000U) {
+        offset = ((size_t)bank * 0x4000U) + (size_t)(addr - 0x4000U);
+    } else {
+        return gb_brain_read8(addr);
+    }
+    return (offset < rom_size) ? rom_data[offset] : 0xFFU;
+}
+
 const uint16_t *gb_brain_get_lcd_rgb565(void)
 {
     return lcd_fb;

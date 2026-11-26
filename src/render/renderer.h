@@ -30,4 +30,8 @@ void renderer_fill_rect(int x, int y, int w, int h, uint16_t color);
 void renderer_draw_rect(int x, int y, int w, int h, uint16_t color);
 void renderer_draw_text(int x, int y, const char *text, uint16_t fg, uint16_t bg, bool draw_bg);
 
+/* Low-level framebuffer access for the 3D rasterizer (Phase 2). */
+uint16_t *renderer_get_draw_fb(int *out_stride_px);
+bool      renderer_has_hw_tri(void);
+
 #endif /* RENDERER_H */

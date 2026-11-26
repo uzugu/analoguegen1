@@ -56,6 +56,17 @@
 /* Tilemap (20x18 BG tile buffer) */
 #define GB_ADDR_TILEMAP              0xC3A0  /* 360 bytes */
 
+/* Overworld block map & tileset metadata (WRAM) */
+#define GB_ADDR_OVERWORLD_MAP        0xC6E8  /* (wCurMapWidth+6) * (wCurMapHeight+6) block IDs */
+#define GB_ADDR_TILESET_BANK         0xD52B  /* uint8_t  wTilesetBank */
+#define GB_ADDR_TILESET_BLOCKS_PTR   0xD52C  /* uint16_t wTilesetBlocksPtr (little-endian) */
+#define GB_ADDR_TILESET_GFX_PTR      0xD52E  /* uint16_t wTilesetGfxPtr */
+#define GB_ADDR_TILESET_COLL_PTR     0xD530  /* uint16_t wTilesetCollisionPtr (0xFF-terminated walkable tiles) */
+#define GB_ADDR_GRASS_TILE           0xD535  /* uint8_t  wGrassTile */
+#define GB_ADDR_VRAM_TILES_BASE      0x9000  /* 0x9000..0x97FF: tiles 0x00..0x7F (16 bytes each, 2bpp) */
+#define GB_ADDR_LCDC                 0xFF40  /* LCD Control register */
+#define GB_ADDR_WY                   0xFF4A  /* Window Y position */
+
 /* Gen 1 type IDs (pokered constants/type_constants.asm) */
 #define GB_TYPE_NORMAL    0x00
 #define GB_TYPE_FIGHTING  0x01

@@ -25,6 +25,7 @@ static uint16_t s_fb_stride_bytes = RENDER_W;
 
 static uint16_t *s_draw_fb     = s_fb_rgb565;
 static uint16_t  s_draw_stride = RENDER_W;
+static bool      s_hw_tri      = false;
 
 /* Compact 5x7 ASCII bitmap font for ASCII 32..126 (column-major, LSB = top row). */
 static const uint8_t s_font5x7[95][FONT_W] = {
@@ -225,6 +226,8 @@ bool renderer_init(renderer_caps_t *out_caps) {
     caps.hw_vcolor = false;
 #endif
 
+    s_hw_tri = (caps.hw_vert_tri && caps.hw_vcolor);
+
     if (out_caps) {
         *out_caps = caps;
     }
@@ -419,4 +422,15 @@ void renderer_draw_text(int x, int y, const char *text, uint16_t fg, uint16_t bg
 
         cur_x += FONT_CELL_W;
     }
+}
+
+uint16_t *renderer_get_draw_fb(int *out_stride_px) {
+    if (out_stride_px) {
+        *out_stride_px = (int)s_draw_stride;
+    }
+    return s_draw_fb;
+}
+
+bool renderer_has_hw_tri(void) {
+    return s_hw_tri;
 }

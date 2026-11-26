@@ -141,13 +141,23 @@ int main(int argc, char **argv) {
         state.frame_count++;
 
         renderer_begin_frame(RGB565(10, 14, 24));
+
+        bool voxel_3d_active = state.rom_loaded &&
+                               mod_manager_is_enabled("dramatic_shape") &&
+                               state.voxel_pitch_deg > 0 &&
+                               state.snap.in_battle == 0 &&
+                               state.snap.map_w > 0 &&
+                               state.snap.map_h > 0;
+
         mod_manager_on_render_3d(&state);
 
         if (state.rom_loaded) {
-            renderer_draw_rect(gb_dst_x - 1, gb_dst_y - 1,
-                               GB_LCD_W + 2, GB_LCD_H + 2,
-                               RGB565(65, 95, 140));
-            renderer_blit_gb_lcd(gb_brain_get_lcd_rgb565(), gb_dst_x, gb_dst_y);
+            if (!voxel_3d_active) {
+                renderer_draw_rect(gb_dst_x - 1, gb_dst_y - 1,
+                                   GB_LCD_W + 2, GB_LCD_H + 2,
+                                   RGB565(65, 95, 140));
+                renderer_blit_gb_lcd(gb_brain_get_lcd_rgb565(), gb_dst_x, gb_dst_y);
+            }
         } else {
             render_missing_rom_screen(rom_path);
         }
