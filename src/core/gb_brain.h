@@ -31,6 +31,9 @@ void gb_brain_set_input(const gb_input_t *in);
 /* Run exactly one Game Boy frame (~59.7 fps) and update state->snap. */
 void gb_brain_run_frame(app_state_t *state);
 
+/* Skip software LCD output; the LCD buffer keeps its last contents (no-op outside Peanut-GB). */
+void gb_brain_set_skip_ppu(bool skip);
+
 /* Read/write arbitrary GB address space (WRAM, SRAM, ROM, VRAM). */
 uint8_t gb_brain_read8(uint16_t addr);
 void    gb_brain_write8(uint16_t addr, uint8_t val);

@@ -8,7 +8,7 @@ GBRT_DIR    := $(ROOT)/third_party/gb-recompiled/runtime
 BUILD_DIR   := $(ROOT)/build
 OBJ_DIR     := $(BUILD_DIR)/obj
 
-BACKEND     ?= native
+BACKEND     ?= peanut
 RECOMP_DIR  ?= $(ROOT)/generated/pokered
 
 USE_SDK_CONTAINER := 0

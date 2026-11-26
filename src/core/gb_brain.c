@@ -40,6 +40,7 @@ void audio_write(const uint16_t addr, const uint8_t val)
 static struct gb_s gb;
 static uint8_t    *rom_data = NULL;
 static size_t      rom_size = 0U;
+static size_t      rom_mask = 0U; /* rom_size - 1 if rom_size is a power of two, else 0 */
 static uint8_t    *cart_ram = NULL;
 static size_t      cart_ram_size = 0U;
 static char       *sav_path = NULL;
@@ -48,10 +49,15 @@ static bool        cart_ram_dirty = false;
 static uint32_t    cart_ram_dirty_frames = 0U;
 
 static uint16_t    lcd_fb[GB_LCD_W * GB_LCD_H];
+static bool        s_skip_ppu = false;
 
 static uint8_t gb_rom_read(struct gb_s *g, const uint_fast32_t addr)
 {
     (void)g;
+    if (rom_mask != 0U) {
+        /* Only non-zero while rom_data is loaded, so the masked index is in bounds. */
+        return rom_data[addr & rom_mask];
+    }
     if (rom_data == NULL || addr >= rom_size) {
         return 0xFFU;
     }
@@ -113,6 +119,10 @@ static void lcd_draw_line(struct gb_s *g, const uint8_t *pixels, const uint_fast
     unsigned int x;
 
     (void)g;
+
+    if (s_skip_ppu) {
+        return;
+    }
 
     if (line >= GB_LCD_H) {
         return;
@@ -204,6 +214,7 @@ bool gb_brain_init(const char *rom_path, app_state_t *state)
         gb_brain_shutdown();
         return false;
     }
+    rom_mask = ((rom_size & (rom_size - 1U)) == 0U) ? (rom_size - 1U) : 0U;
 
     init_err = gb_init(&gb, gb_rom_read, gb_cart_ram_read, gb_cart_ram_write, gb_error_cb, NULL);
     if (init_err != GB_INIT_NO_ERROR) {
@@ -239,7 +250,7 @@ bool gb_brain_init(const char *rom_path, app_state_t *state)
     }
 
     memset(lcd_fb, 0, sizeof(lcd_fb));
-    gb_init_lcd(&gb, lcd_draw_line);
+    gb_init_lcd(&gb, s_skip_ppu ? NULL : lcd_draw_line);
 
     initialized = true;
     state->rom_loaded = true;
@@ -267,6 +278,7 @@ void gb_brain_shutdown(void)
     free(rom_data);
     rom_data = NULL;
     rom_size = 0U;
+    rom_mask = 0U;
 
     initialized = false;
 }
@@ -291,6 +303,14 @@ void gb_brain_set_input(const gb_input_t *in)
     }
 
     gb.direct.joypad = joypad;
+}
+
+void gb_brain_set_skip_ppu(bool skip)
+{
+    s_skip_ppu = skip;
+    if (initialized) {
+        gb.display.lcd_draw_line = skip ? NULL : lcd_draw_line;
+    }
 }
 
 void gb_brain_run_frame(app_state_t *state)
@@ -383,7 +403,8 @@ void gb_brain_run_frame(app_state_t *state)
     for (s = 0U; s < APP_MAX_NPCS; s++) {
         uint16_t off = (uint16_t)((s + 1U) * 16U);
         uint8_t pic = gb_brain_read8((uint16_t)(GB_ADDR_SPRITE_DATA1 + off + GB_SPRITE1_PICTURE_ID));
-        if (pic != 0U) {
+        uint8_t img = gb_brain_read8((uint16_t)(GB_ADDR_SPRITE_DATA1 + off + GB_SPRITE1_IMAGE_INDEX));
+        if (pic != 0U && img != 0xFFU) { /* image index 0xFF = sprite hidden by the game */
             state->snap.npcs[s].active = true;
             state->snap.npcs[s].picture_id = pic;
             state->snap.npcs[s].facing_dir = gb_brain_read8((uint16_t)(GB_ADDR_SPRITE_DATA1 + off + GB_SPRITE1_FACING_DIR));

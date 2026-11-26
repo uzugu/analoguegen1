@@ -159,6 +159,14 @@ int main(int argc, char **argv) {
         state.audio_enabled = mod_manager_is_enabled("dmg_audio");
         unsigned int t_gb0 = of_time_us();
         if (state.rom_loaded) {
+            /* Decided from last frame's snapshot: skip LCD output while no GB pixels are shown. */
+            gb_brain_set_skip_ppu(state.rom_loaded &&
+                                  mod_manager_is_enabled("dramatic_shape") &&
+                                  state.voxel_pitch_deg > 0 &&
+                                  state.snap.in_battle == 0 &&
+                                  state.snap.ui_overlay == (uint8_t)UI_OVERLAY_NONE &&
+                                  state.snap.map_w > 0 &&
+                                  state.snap.map_h > 0);
             gb_brain_run_frame(&state);
             mod_manager_on_frame(&state);
         }
@@ -170,6 +178,7 @@ int main(int argc, char **argv) {
         bool voxel_3d_active = state.rom_loaded &&
                                mod_manager_is_enabled("dramatic_shape") &&
                                state.voxel_pitch_deg > 0 &&
+                               state.snap.in_battle == 0 &&
                                state.snap.ui_overlay != (uint8_t)UI_OVERLAY_FULLSCREEN_2D &&
                                state.snap.map_w > 0 &&
                                state.snap.map_h > 0;

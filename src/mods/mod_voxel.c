@@ -221,6 +221,7 @@ static void mod_voxel_on_frame(app_state_t *state) {
 static void mod_voxel_on_render_3d(const app_state_t *state) {
     if (!state || !state->rom_loaded || !s_mesh_ready ||
         state->voxel_pitch_deg <= 0 ||
+        state->snap.in_battle != 0 ||
         state->snap.ui_overlay == (uint8_t)UI_OVERLAY_FULLSCREEN_2D) {
         return;
     }
@@ -311,6 +312,9 @@ static void mod_voxel_on_render_3d(const app_state_t *state) {
         float nz = s_map_view.player_local_ty * 8.0f + (float)(dy * 16);
         const uint16_t off = (uint16_t)((i + 1) * 16);
         const uint8_t npc_img = gb_brain_read8((uint16_t)(GB_ADDR_SPRITE_DATA1 + off + GB_SPRITE1_IMAGE_INDEX));
+        if (npc_img == 0xFFu) {
+            continue; /* hidden / off-screen sprite */
+        }
         const bool npc_flip = (npc->facing_dir == 12u);
         if (npc_img < 124u &&
             decode_vram_sprite_16x16(npc_img, npc_flip, spr_tex, RGB565(244, 218, 184), RGB565(72, 148, 224))) {

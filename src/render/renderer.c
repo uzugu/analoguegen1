@@ -20,6 +20,12 @@
 /* Internal 16-bit backing buffer used when runtime only supports 8-bit indexed. */
 static uint16_t s_fb_rgb565[RENDER_W * RENDER_H];
 
+/* RGB565 -> RGB332 table, filled by renderer_init() for the 8-bit fallback. */
+static uint8_t s_rgb565_to_332_lut[65536];
+
+/* 32-bit store type that may alias the 8/16-bit framebuffer pixels. */
+typedef uint32_t __attribute__((__may_alias__)) fb_word_t;
+
 static bool     s_rgb565_mode     = false;
 static uint16_t s_fb_stride_px    = RENDER_W;
 static uint16_t s_fb_stride_bytes = RENDER_W;
@@ -206,6 +212,9 @@ bool renderer_init(renderer_caps_t *out_caps) {
         s_fb_stride_bytes = actual.stride ? actual.stride : RENDER_W;
         s_fb_stride_px = RENDER_W;
         install_rgb332_palette();
+        for (uint32_t c = 0u; c < 65536u; c++) {
+            s_rgb565_to_332_lut[c] = rgb565_to_rgb332((uint16_t)c);
+        }
     }
 
     of_video_set_display_mode(OF_DISPLAY_FRAMEBUFFER);
@@ -262,7 +271,15 @@ void renderer_begin_frame(uint16_t clear_color) {
             if (clear_color == 0u) {
                 memset(row, 0, (size_t)RENDER_W * sizeof(uint16_t));
             } else {
-                for (int x = 0; x < RENDER_W; x++) {
+                int x = 0;
+                if (((uintptr_t)row & 3u) == 0u) {
+                    const uint32_t pair = ((uint32_t)clear_color << 16) | clear_color;
+                    fb_word_t *row32 = (fb_word_t *)(void *)row;
+                    for (; x + 2 <= RENDER_W; x += 2) {
+                        row32[x / 2] = pair;
+                    }
+                }
+                for (; x < RENDER_W; x++) {
                     row[x] = clear_color;
                 }
             }
@@ -277,8 +294,19 @@ void renderer_end_frame(void) {
             for (int y = 0; y < RENDER_H; y++) {
                 const uint16_t *src = s_fb_rgb565 + (uint32_t)y * RENDER_W;
                 uint8_t *dst = dst8 + (uint32_t)y * s_fb_stride_bytes;
-                for (int x = 0; x < RENDER_W; x++) {
-                    dst[x] = rgb565_to_rgb332(src[x]);
+                int x = 0;
+                if (((uintptr_t)dst & 3u) == 0u) {
+                    fb_word_t *dst32 = (fb_word_t *)(void *)dst;
+                    for (; x + 4 <= RENDER_W; x += 4) {
+                        dst32[x / 4] =
+                            (uint32_t)s_rgb565_to_332_lut[src[x]] |
+                            ((uint32_t)s_rgb565_to_332_lut[src[x + 1]] << 8) |
+                            ((uint32_t)s_rgb565_to_332_lut[src[x + 2]] << 16) |
+                            ((uint32_t)s_rgb565_to_332_lut[src[x + 3]] << 24);
+                    }
+                }
+                for (; x < RENDER_W; x++) {
+                    dst[x] = s_rgb565_to_332_lut[src[x]];
                 }
             }
         }
