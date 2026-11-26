@@ -5,8 +5,8 @@
 #include <stdint.h>
 #include "app_state.h"
 
-/* Visible 8x8 tile window extracted around the player (14x12 tiles = 112x96 world px). */
-#define GB_MAP_VIEW_W 14
+/* Visible 8x8 tile window extracted around the player (16x12 tiles = 8x6 walk cells, always even-aligned). */
+#define GB_MAP_VIEW_W 16
 #define GB_MAP_VIEW_H 12
 
 /* Decoded tileset atlas: 16x8 grid of 8x8 tiles (128 tiles = 0x00..0x7F). */

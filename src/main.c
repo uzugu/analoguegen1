@@ -182,8 +182,14 @@ int main(int argc, char **argv) {
 
         if (state.rom_loaded) {
             if (!voxel_3d_active) {
-                /* Exact 2x2 integer blit into 320x288 (10:9) -> 5x Pocket HW scale = exact 10x GB LCD! */
-                renderer_blit_gb_lcd_2x(gb_brain_get_lcd_rgb565(), state.gb_filter_mode >= 4u);
+                /* Direct 160x144 -> 320x288 8-bit fast path when no 2D overlay/HUD is drawn on top. */
+                bool has_overlay = state.mods_menu_open || state.gen3box_open || state.show_debug_hud ||
+                                   (state.snap.in_battle != 0 && mod_manager_is_enabled("battle_move_info"));
+                if (!has_overlay) {
+                    renderer_blit_gb_lcd_2x_direct(gb_brain_get_lcd_rgb565(), state.gb_filter_mode >= 4u);
+                } else {
+                    renderer_blit_gb_lcd_2x(gb_brain_get_lcd_rgb565(), state.gb_filter_mode >= 4u);
+                }
             } else if (state.snap.in_battle != 0 ||
                        state.snap.ui_overlay == (uint8_t)UI_OVERLAY_DIALOGUE) {
                 /* Composite bottom dialogue strip (rows 96..143) over 3D scene */

@@ -195,18 +195,7 @@ void voxel_mesher_build(const gb_map_view_t *map, const app_state_t *state, voxe
                 }
             }
 
-            /* North face (-Z): visible if this tile stands higher than vy - 1 */
-            {
-                const float nh = neighbor_height(map, vx, vy - 1);
-                if (h > nh) {
-                    const uint16_t c_north = shade_rgb565(cls, tileset, daytime_mode, FACE_SHADE_NORTH);
-                    emit_quad(out,
-                              make_vert(x1, h,  z0, u0, v0, c_north),
-                              make_vert(x1, nh, z0, u0, v1, c_north),
-                              make_vert(x0, nh, z0, u1, v1, c_north),
-                              make_vert(x0, h,  z0, u1, v0, c_north));
-                }
-            }
+            /* North face (-Z): skipped because diorama camera always looks North (yaw == 0). */
 
             /* East face (+X): visible if this tile stands higher than vx + 1 */
             {

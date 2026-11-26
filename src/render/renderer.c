@@ -30,6 +30,7 @@ static bool     s_rgb565_mode     = false;
 static uint16_t s_fb_stride_px    = RENDER_W;
 static uint16_t s_fb_stride_bytes = RENDER_W;
 static int      s_out_h           = RENDER_H;
+static bool     s_direct8_done    = false;
 
 static uint16_t *s_draw_fb     = s_fb_rgb565;
 static uint16_t  s_draw_stride = RENDER_W;
@@ -256,6 +257,7 @@ bool renderer_init(renderer_caps_t *out_caps) {
 }
 
 void renderer_begin_frame_noclear(void) {
+    s_direct8_done = false;
     if (s_rgb565_mode) {
         uint16_t *surf = of_video_surface16();
         if (surf) {
@@ -299,7 +301,7 @@ void renderer_begin_frame(uint16_t clear_color) {
 }
 
 void renderer_end_frame(void) {
-    if (!s_rgb565_mode) {
+    if (!s_rgb565_mode && !s_direct8_done) {
         uint8_t *dst8 = of_video_surface();
         if (dst8) {
             const int copy_h = (s_out_h > 0 && s_out_h < RENDER_H) ? s_out_h : RENDER_H;
@@ -362,6 +364,64 @@ void renderer_blit_gb_lcd(const uint16_t *lcd_rgb565, int dst_x, int dst_y) {
         uint16_t *dst = s_draw_fb + (uint32_t)(dst_y + y) * s_draw_stride + dst_x;
         memcpy(dst, src, (size_t)copy_w * sizeof(uint16_t));
     }
+}
+
+void renderer_blit_gb_lcd_2x_direct(const uint16_t *lcd_rgb565, bool lcd_grid) {
+    if (!lcd_rgb565) {
+        return;
+    }
+    if (s_rgb565_mode || s_out_h != RENDER_H) {
+        renderer_blit_gb_lcd_2x(lcd_rgb565, lcd_grid);
+        return;
+    }
+    uint8_t *dst8 = of_video_surface();
+    if (!dst8) {
+        renderer_blit_gb_lcd_2x(lcd_rgb565, lcd_grid);
+        return;
+    }
+
+    /* Direct 160x144 RGB565 -> 320x288 8-bit RGB332: 4x fewer LUT lookups, zero s_fb_rgb565 traffic! */
+    for (int y = 0; y < GB_SRC_H; y++) {
+        const uint16_t *src = lcd_rgb565 + (uint32_t)y * GB_SRC_W;
+        uint8_t *row0 = dst8 + (uint32_t)(y * 2) * s_fb_stride_bytes;
+        uint8_t *row1 = dst8 + (uint32_t)(y * 2 + 1) * s_fb_stride_bytes;
+        if ((((uintptr_t)row0 & 3u) == 0u) && (((uintptr_t)row1 & 3u) == 0u)) {
+            fb_word_t *r0 = (fb_word_t *)(void *)row0;
+            fb_word_t *r1 = (fb_word_t *)(void *)row1;
+            if (!lcd_grid) {
+                for (int x = 0; x < GB_SRC_W; x += 2) {
+                    const uint32_t c0 = s_rgb565_to_332_lut[src[x]];
+                    const uint32_t c1 = s_rgb565_to_332_lut[src[x + 1]];
+                    const uint32_t w  = c0 | (c0 << 8) | (c1 << 16) | (c1 << 24);
+                    r0[x >> 1] = w;
+                    r1[x >> 1] = w;
+                }
+            } else {
+                for (int x = 0; x < GB_SRC_W; x += 2) {
+                    const uint16_t s0 = src[x];
+                    const uint16_t s1 = src[x + 1];
+                    const uint32_t c0 = s_rgb565_to_332_lut[s0];
+                    const uint32_t c1 = s_rgb565_to_332_lut[s1];
+                    const uint32_t d0 = s_rgb565_to_332_lut[(uint16_t)(s0 - ((s0 >> 4) & 0x0861u))];
+                    const uint32_t d1 = s_rgb565_to_332_lut[(uint16_t)(s1 - ((s1 >> 4) & 0x0861u))];
+                    r0[x >> 1] = c0 | (c0 << 8) | (c1 << 16) | (c1 << 24);
+                    r1[x >> 1] = d0 | (d0 << 8) | (d1 << 16) | (d1 << 24);
+                }
+            }
+        } else {
+            for (int x = 0; x < GB_SRC_W; x++) {
+                const uint16_t s = src[x];
+                const uint8_t c = s_rgb565_to_332_lut[s];
+                const uint8_t d = lcd_grid ? s_rgb565_to_332_lut[(uint16_t)(s - ((s >> 4) & 0x0861u))] : c;
+                const int dx = x * 2;
+                row0[dx]     = c;
+                row0[dx + 1] = c;
+                row1[dx]     = d;
+                row1[dx + 1] = d;
+            }
+        }
+    }
+    s_direct8_done = true;
 }
 
 void renderer_blit_gb_lcd_2x(const uint16_t *lcd_rgb565, bool lcd_grid) {
