@@ -223,8 +223,9 @@ static void wilds_on_render_3d(const app_state_t *state) {
             continue;
         }
 
-        float wx = 10.0f * 8.0f + (float)dx * 16.0f;
-        float wz =  9.0f * 8.0f + (float)dy * 16.0f;
+        /* Matches gb_map.c player_local_tx = 11.0f, player_local_ty = 10.0f */
+        float wx = 11.0f * 8.0f + (float)dx * 16.0f;
+        float wz = 10.0f * 8.0f + (float)dy * 16.0f;
 
         uint16_t body_col   = s_spawns[i].body_color;
         uint16_t accent_col = s_spawns[i].accent_color;

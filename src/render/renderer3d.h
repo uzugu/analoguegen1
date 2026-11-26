@@ -26,6 +26,10 @@ void r3d_draw_mesh(const voxel_mesh_t *mesh, const uint16_t *atlas_rgb565, int a
 void r3d_draw_billboard(float wx, float wy, float wz, float width, float height,
                         uint16_t body_color, uint16_t accent_color, bool draw_shadow);
 
+/* Draw a camera-facing 3D billboard textured with a custom RGB565 sprite (0 = transparent). */
+void r3d_draw_sprite_billboard(float wx, float wy, float wz, float width, float height,
+                               const uint16_t *tex_rgb565, int tex_w, int tex_h, bool draw_shadow);
+
 void r3d_end_scene(void);
 
 #endif /* RENDERER3D_H */

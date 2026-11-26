@@ -1,5 +1,7 @@
 #include "mod_manager.h"
+#include "gb_brain.h"
 #include "gb_map.h"
+#include "pokered_ram.h"
 #include "voxel_mesher.h"
 #include "renderer.h"
 #include "renderer3d.h"
@@ -21,6 +23,50 @@ static const char *dir_name(uint8_t facing_dir) {
         case 12: return "E";
         default: return "?";
     }
+}
+
+static bool decode_vram_sprite_16x16(uint8_t base_tile, uint16_t out_16x16[256],
+                                     uint16_t tint_shade1, uint16_t tint_shade2) {
+    if (base_tile > 124u) {
+        return false;
+    }
+
+    static const uint8_t quad_ox[4] = { 0u, 8u, 0u, 8u };
+    static const uint8_t quad_oy[4] = { 0u, 0u, 8u, 8u };
+    const uint16_t outline_col = RGB565(24, 24, 24);
+    bool has_pixels = false;
+
+    for (int q = 0; q < 4; q++) {
+        const uint16_t tile_base = (uint16_t)(0x8000u + (uint16_t)((uint16_t)base_tile + (uint16_t)q) * 16u);
+        const int ox = (int)quad_ox[q];
+        const int oy = (int)quad_oy[q];
+
+        for (int py = 0; py < 8; py++) {
+            const uint16_t row_addr = (uint16_t)(tile_base + (uint16_t)(py * 2));
+            const uint8_t lo = gb_brain_read8(row_addr);
+            const uint8_t hi = gb_brain_read8((uint16_t)(row_addr + 1u));
+            uint16_t *dst_row = &out_16x16[(oy + py) * 16 + ox];
+
+            for (int px = 0; px < 8; px++) {
+                const int bit = 7 - px;
+                const uint8_t shade = (uint8_t)(((lo >> bit) & 1u) | (((hi >> bit) & 1u) << 1));
+                uint16_t col = 0u;
+                if (shade == 1u) {
+                    col = tint_shade1;
+                    has_pixels = true;
+                } else if (shade == 2u) {
+                    col = tint_shade2;
+                    has_pixels = true;
+                } else if (shade == 3u) {
+                    col = outline_col;
+                    has_pixels = true;
+                }
+                dst_row[px] = col;
+            }
+        }
+    }
+
+    return has_pixels;
 }
 
 static void mod_voxel_init(app_state_t *state) {
@@ -71,11 +117,11 @@ static void mod_voxel_on_render_3d(const app_state_t *state) {
     float px = s_map_view.player_local_tx * 8.0f;
     float pz = s_map_view.player_local_ty * 8.0f;
 
-    /* Smooth sub-tile walk interpolation when walk_counter is active (8..1 -> 0..16px) */
+    /* Smooth sub-tile walk interpolation: wXCoord/wYCoord advance at step start while wWalkCounter counts 8 -> 0. */
     if (state->snap.walk_counter > 0 && state->snap.walk_counter <= 8) {
-        float frac = (float)(8 - state->snap.walk_counter) / 8.0f;
-        px += (float)state->snap.walk_dx * frac * 16.0f;
-        pz += (float)state->snap.walk_dy * frac * 16.0f;
+        float frac = (float)state->snap.walk_counter / 8.0f;
+        px -= (float)state->snap.walk_dx * frac * 16.0f;
+        pz -= (float)state->snap.walk_dy * frac * 16.0f;
     }
 
     r3d_camera_t cam;
@@ -90,9 +136,16 @@ static void mod_voxel_on_render_3d(const app_state_t *state) {
 
     r3d_draw_mesh(&s_mesh, s_map_view.atlas_rgb565, GB_ATLAS_W, GB_ATLAS_H);
 
-    /* Player billboard (Red: red cap + blue/white outfit) */
-    r3d_draw_billboard(px, 0.0f, pz, 10.0f, 14.0f,
-                       RGB565(220, 48, 48), RGB565(245, 220, 185), true);
+    /* Player billboard (Red: live 16x16 VRAM sprite with stylized fallback) */
+    uint16_t spr_tex[256];
+    const uint8_t red_img = gb_brain_read8((uint16_t)(GB_ADDR_SPRITE_DATA1 + GB_SPRITE1_IMAGE_INDEX));
+    if (red_img != 0xFFu &&
+        decode_vram_sprite_16x16(red_img, spr_tex, RGB565(245, 220, 185), RGB565(220, 48, 48))) {
+        r3d_draw_sprite_billboard(px, 0.0f, pz, 14.0f, 16.0f, spr_tex, 16, 16, true);
+    } else {
+        r3d_draw_billboard(px, 0.0f, pz, 10.0f, 14.0f,
+                           RGB565(220, 48, 48), RGB565(245, 220, 185), true);
+    }
 
     /* Live NPC billboards from wSpriteStateData1/2 */
     for (int i = 0; i < APP_MAX_NPCS; i++) {
@@ -107,8 +160,15 @@ static void mod_voxel_on_render_3d(const app_state_t *state) {
         }
         float nx = s_map_view.player_local_tx * 8.0f + (float)(dx * 16);
         float nz = s_map_view.player_local_ty * 8.0f + (float)(dy * 16);
-        r3d_draw_billboard(nx, 0.0f, nz, 10.0f, 13.0f,
-                           RGB565(72, 148, 224), RGB565(240, 210, 175), true);
+        const uint16_t off = (uint16_t)((i + 1) * 16);
+        const uint8_t npc_img = gb_brain_read8((uint16_t)(GB_ADDR_SPRITE_DATA1 + off + GB_SPRITE1_IMAGE_INDEX));
+        if (npc_img < 124u &&
+            decode_vram_sprite_16x16(npc_img, spr_tex, RGB565(240, 210, 175), RGB565(72, 148, 224))) {
+            r3d_draw_sprite_billboard(nx, 0.0f, nz, 14.0f, 16.0f, spr_tex, 16, 16, true);
+        } else {
+            r3d_draw_billboard(nx, 0.0f, nz, 10.0f, 13.0f,
+                               RGB565(72, 148, 224), RGB565(240, 210, 175), true);
+        }
     }
 
     /* Optional PokéPC Follower billboard one tile behind player */

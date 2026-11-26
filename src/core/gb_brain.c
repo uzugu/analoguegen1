@@ -1,6 +1,9 @@
 #include "gb_brain.h"
 #include "gb_audio.h"
 #include "pokered_ram.h"
+#ifndef OF_PC
+#include "of_file.h"
+#endif
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -41,6 +44,8 @@ static uint8_t    *cart_ram = NULL;
 static size_t      cart_ram_size = 0U;
 static char       *sav_path = NULL;
 static bool        initialized = false;
+static bool        cart_ram_dirty = false;
+static uint32_t    cart_ram_dirty_frames = 0U;
 
 static uint16_t    lcd_fb[GB_LCD_W * GB_LCD_H];
 
@@ -66,7 +71,25 @@ static void gb_cart_ram_write(struct gb_s *g, const uint_fast32_t addr, const ui
 {
     (void)g;
     if (cart_ram != NULL && addr < cart_ram_size) {
-        cart_ram[addr] = val;
+        if (cart_ram[addr] != val) {
+            cart_ram[addr] = val;
+            cart_ram_dirty = true;
+            cart_ram_dirty_frames = 0U;
+        }
+    }
+}
+
+static void gb_flush_save_file(void)
+{
+    if (cart_ram != NULL && cart_ram_size > 0U && sav_path != NULL) {
+        FILE *sf = fopen(sav_path, "wb");
+        if (sf != NULL) {
+            size_t swr = fwrite(cart_ram, 1U, cart_ram_size, sf);
+            (void)swr;
+            fclose(sf);
+        }
+        cart_ram_dirty = false;
+        cart_ram_dirty_frames = 0U;
     }
 }
 
@@ -145,6 +168,12 @@ bool gb_brain_init(const char *rom_path, app_state_t *state)
     state->version = GAME_VER_UNKNOWN;
     state->rom_title[0] = '\0';
     memset(&state->snap, 0, sizeof(state->snap));
+
+#ifndef OF_PC
+    if (of_file_slot_find(rom_path, NULL) < 0) {
+        of_file_slot_register(0U, rom_path);
+    }
+#endif
 
     fp = fopen(rom_path, "rb");
     if (fp == NULL) {
@@ -283,6 +312,14 @@ void gb_brain_run_frame(app_state_t *state)
 
     gb_run_frame(&gb);
     gb_audio_push_frame();
+
+    /* Auto-flush SRAM ~2 seconds after the last write so saves survive power-off. */
+    if (cart_ram_dirty) {
+        cart_ram_dirty_frames++;
+        if (cart_ram_dirty_frames >= 120U) {
+            gb_flush_save_file();
+        }
+    }
 
     if (state == NULL) {
         return;

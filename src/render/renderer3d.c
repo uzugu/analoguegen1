@@ -21,6 +21,7 @@ typedef struct {
 typedef struct {
     float sx, sy;
     float depth;
+    float inv_w;
     float u, v;
 } r3d_proj_vert_t;
 
@@ -123,6 +124,7 @@ static bool r3d_project_vert(const voxel_vert_t *in, r3d_proj_vert_t *out) {
         depth_f = 65535.0f;
     }
     out->depth = depth_f;
+    out->inv_w = inv_w;
     out->u     = in->u;
     out->v     = in->v;
     return true;
@@ -199,15 +201,18 @@ static void r3d_rasterize_tri(const r3d_proj_vert_t *p0,
     const uint32_t sb8 = (((uint32_t)( shade_rgb        & 0x1Fu)) * 256u + 15u) / 31u;
 
     const float edge_eps = -1e-4f;
-    const float z0 = p0->depth;
-    const float z1 = p1->depth;
-    const float z2 = p2->depth;
-    const float u0 = p0->u;
-    const float u1 = p1->u;
-    const float u2 = p2->u;
-    const float v0 = p0->v;
-    const float v1 = p1->v;
-    const float v2 = p2->v;
+    const float z0  = p0->depth;
+    const float z1  = p1->depth;
+    const float z2  = p2->depth;
+    const float iw0 = p0->inv_w;
+    const float iw1 = p1->inv_w;
+    const float iw2 = p2->inv_w;
+    const float u0  = p0->u;
+    const float u1  = p1->u;
+    const float u2  = p2->u;
+    const float v0  = p0->v;
+    const float v1  = p1->v;
+    const float v2  = p2->v;
 
     const bool use_sw_z = !renderer_has_hw_tri();
 
@@ -224,15 +229,30 @@ static void r3d_rasterize_tri(const r3d_proj_vert_t *p0,
             if (b0 >= edge_eps && b1 >= edge_eps && b2 >= edge_eps) {
                 entered = true;
 
-                float zf = b0 * z0 + b1 * z1 + b2 * z2;
-                if (zf < 0.0f) {
-                    zf = 0.0f;
-                } else if (zf > 65535.0f) {
-                    zf = 65535.0f;
+                uint16_t depth;
+                bool z_pass;
+                if (use_sw_z) {
+                    float zf = b0 * z0 + b1 * z1 + b2 * z2;
+                    if (zf < 0.0f) {
+                        zf = 0.0f;
+                    } else if (zf > 65535.0f) {
+                        zf = 65535.0f;
+                    }
+                    depth = (uint16_t)(zf + 0.5f);
+                    z_pass = (depth < z_row[x]);
+                } else {
+                    float inv_w_f = b0 * iw0 + b1 * iw1 + b2 * iw2;
+                    float hw_zf = inv_w_f * 16384.0f;
+                    if (hw_zf < 1.0f) {
+                        hw_zf = 1.0f;
+                    } else if (hw_zf > 65535.0f) {
+                        hw_zf = 65535.0f;
+                    }
+                    depth = (uint16_t)hw_zf;
+                    z_pass = (depth >= z_row[x]);
                 }
-                const uint16_t depth = (uint16_t)(zf + 0.5f);
 
-                if (!use_sw_z || depth < z_row[x]) {
+                if (z_pass) {
                     uint16_t out_col = shade_rgb;
 
                     if (has_tex) {
@@ -253,9 +273,7 @@ static void r3d_rasterize_tri(const r3d_proj_vert_t *p0,
                         out_col = identity_shade ? texel : r3d_modulate_rgb565(texel, sr8, sg8, sb8);
                     }
 
-                    if (use_sw_z) {
-                        z_row[x] = depth;
-                    }
+                    z_row[x] = depth;
                     fb_row[x] = out_col;
                 }
             } else if (entered) {
@@ -504,9 +522,10 @@ void r3d_draw_mesh(const voxel_mesh_t *mesh, const uint16_t *atlas_rgb565, int a
     }
 }
 
-void r3d_draw_billboard(float wx, float wy, float wz, float width, float height,
-                        uint16_t body_color, uint16_t accent_color, bool draw_shadow) {
-    if (s_fb == NULL || width <= 0.0f || height <= 0.0f) {
+void r3d_draw_sprite_billboard(float wx, float wy, float wz, float width, float height,
+                               const uint16_t *tex_rgb565, int tex_w, int tex_h, bool draw_shadow) {
+    if (s_fb == NULL || width <= 0.0f || height <= 0.0f ||
+        tex_rgb565 == NULL || tex_w <= 0 || tex_h <= 0) {
         return;
     }
 
@@ -541,32 +560,12 @@ void r3d_draw_billboard(float wx, float wy, float wz, float width, float height,
         r3d_submit_tri(&s1, shadow_tex, R3D_SHADOW_W, R3D_SHADOW_H, true);
     }
 
-    /* 2. Build stylized 8x12 RGB565 character texture (0 = transparent alpha key). */
-    const uint16_t outline_col = RGB565(32, 36, 48);
-    const uint16_t face_col    = RGB565(244, 214, 184);
-    const uint16_t safe_body   = (body_color   != 0u) ? body_color   : RGB565(16, 16, 24);
-    const uint16_t safe_accent = (accent_color != 0u) ? accent_color : RGB565(16, 16, 24);
-
-    uint16_t sprite_tex[R3D_SPRITE_H * R3D_SPRITE_W];
-    for (int r = 0; r < R3D_SPRITE_H; r++) {
-        for (int c = 0; c < R3D_SPRITE_W; c++) {
-            uint16_t col = 0u;
-            switch (s_char_sprite[r][c]) {
-            case 1: col = outline_col; break;
-            case 2: col = safe_body;   break;
-            case 3: col = safe_accent; break;
-            case 4: col = face_col;    break;
-            default: col = 0u;         break;
-            }
-            sprite_tex[r * R3D_SPRITE_W + c] = col;
-        }
-    }
-
     /*
-     * Use pure world +Y vertical axis at diorama pitches (>= 30 deg) so sprites
-     * standing directly in front of buildings/trees do not lean into walls, and
-     * smoothly tilt toward camera up at shallow top-down pitches (< 30 deg) so
-     * the billboard stays clearly visible even at pitch_deg == 0.
+     * 2. Camera-facing billboard quad: use pure world +Y vertical axis at diorama
+     * pitches (>= 30 deg) so sprites standing directly in front of buildings/trees
+     * do not lean into walls, and smoothly tilt toward camera up at shallow
+     * top-down pitches (< 30 deg) so the billboard stays clearly visible even at
+     * pitch_deg == 0.
      */
     float up_x = 0.0f;
     float up_y = 1.0f;
@@ -592,18 +591,51 @@ void r3d_draw_billboard(float wx, float wy, float wz, float width, float height,
     const float hx = up_x * height;
     const float hy = up_y * height;
     const float hz = up_z * height;
+    const float u_max = (float)tex_w;
+    const float v_max = (float)tex_h;
 
     /* Quad corners: TL -> BL -> BR -> TR (CCW facing camera). */
-    const voxel_vert_t v_tl = { wx - rx + hx, wy + hy, wz - rz + hz, 0.0f,               0.0f,               0xFFFFu };
-    const voxel_vert_t v_bl = { wx - rx,      wy,      wz - rz,      0.0f,               (float)R3D_SPRITE_H, 0xFFFFu };
-    const voxel_vert_t v_br = { wx + rx,      wy,      wz + rz,      (float)R3D_SPRITE_W, (float)R3D_SPRITE_H, 0xFFFFu };
-    const voxel_vert_t v_tr = { wx + rx + hx, wy + hy, wz + rz + hz, (float)R3D_SPRITE_W, 0.0f,               0xFFFFu };
+    const voxel_vert_t v_tl = { wx - rx + hx, wy + hy, wz - rz + hz, 0.0f,  0.0f,  0xFFFFu };
+    const voxel_vert_t v_bl = { wx - rx,      wy,      wz - rz,      0.0f,  v_max, 0xFFFFu };
+    const voxel_vert_t v_br = { wx + rx,      wy,      wz + rz,      u_max, v_max, 0xFFFFu };
+    const voxel_vert_t v_tr = { wx + rx + hx, wy + hy, wz + rz + hz, u_max, 0.0f,  0xFFFFu };
 
     voxel_tri_t t0 = {{ v_tl, v_bl, v_br }};
     voxel_tri_t t1 = {{ v_tl, v_br, v_tr }};
 
-    r3d_submit_tri(&t0, sprite_tex, R3D_SPRITE_W, R3D_SPRITE_H, true);
-    r3d_submit_tri(&t1, sprite_tex, R3D_SPRITE_W, R3D_SPRITE_H, true);
+    r3d_submit_tri(&t0, tex_rgb565, tex_w, tex_h, true);
+    r3d_submit_tri(&t1, tex_rgb565, tex_w, tex_h, true);
+}
+
+void r3d_draw_billboard(float wx, float wy, float wz, float width, float height,
+                        uint16_t body_color, uint16_t accent_color, bool draw_shadow) {
+    if (s_fb == NULL || width <= 0.0f || height <= 0.0f) {
+        return;
+    }
+
+    /* Build stylized 8x12 RGB565 character texture (0 = transparent alpha key). */
+    const uint16_t outline_col = RGB565(32, 36, 48);
+    const uint16_t face_col    = RGB565(244, 214, 184);
+    const uint16_t safe_body   = (body_color   != 0u) ? body_color   : RGB565(16, 16, 24);
+    const uint16_t safe_accent = (accent_color != 0u) ? accent_color : RGB565(16, 16, 24);
+
+    uint16_t sprite_tex[R3D_SPRITE_H * R3D_SPRITE_W];
+    for (int r = 0; r < R3D_SPRITE_H; r++) {
+        for (int c = 0; c < R3D_SPRITE_W; c++) {
+            uint16_t col = 0u;
+            switch (s_char_sprite[r][c]) {
+            case 1: col = outline_col; break;
+            case 2: col = safe_body;   break;
+            case 3: col = safe_accent; break;
+            case 4: col = face_col;    break;
+            default: col = 0u;         break;
+            }
+            sprite_tex[r * R3D_SPRITE_W + c] = col;
+        }
+    }
+
+    r3d_draw_sprite_billboard(wx, wy, wz, width, height,
+                              sprite_tex, R3D_SPRITE_W, R3D_SPRITE_H, draw_shadow);
 }
 
 void r3d_end_scene(void) {
