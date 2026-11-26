@@ -1,4 +1,5 @@
 #include "voxel_mesher.h"
+#include "voxel_heights_table.h"
 #include "renderer.h"
 
 #include <stddef.h>
@@ -14,24 +15,49 @@
 #define FACE_SHADE_WEST   0.72f
 #define FACE_SHADE_NORTH  0.68f
 
-static float tile_height_for(uint8_t cls, uint8_t tileset) {
+static float tile_height_for(uint8_t cls, uint8_t tileset, uint8_t tid) {
+    if (tileset < VOXEL_PROF_TILESETS && tid < VOXEL_PROF_TILES) {
+        const int8_t ph = k_voxel_prof_height[tileset][tid];
+        if (ph != VOXEL_PROF_UNPINNED) {
+            return (float)ph;
+        }
+    }
     switch (cls) {
     case TILE_CLASS_WATER:  return -2.0f;
     case TILE_CLASS_GROUND: return  0.0f;
     case TILE_CLASS_GRASS:  return  0.0f;
-    case TILE_CLASS_LEDGE:  return  5.0f;
-    case TILE_CLASS_FENCE:  return  8.0f;
-    case TILE_CLASS_SOLID:  return (tileset == 0U) ? 12.0f : 9.0f;
-    case TILE_CLASS_TALL:   return 20.0f;
+    case TILE_CLASS_LEDGE:  return  6.0f;
+    case TILE_CLASS_FENCE:  return 10.0f;
+    case TILE_CLASS_SOLID:  return (tileset == 0U) ? 14.0f : 10.0f;
+    case TILE_CLASS_TALL:   return 22.0f;
     default:                return  0.0f;
     }
+}
+
+static uint8_t effective_class_for(uint8_t cls, uint8_t tileset, uint8_t tid) {
+    if (tileset < VOXEL_PROF_TILESETS && tid < VOXEL_PROF_TILES) {
+        switch (k_voxel_prof_kind[tileset][tid]) {
+        case 1u: return (uint8_t)TILE_CLASS_GROUND;
+        case 2u: return (uint8_t)TILE_CLASS_WATER;
+        case 3u: return (uint8_t)TILE_CLASS_LEDGE;
+        case 4u: return (uint8_t)TILE_CLASS_FENCE;
+        case 5u: return (uint8_t)TILE_CLASS_FENCE; /* furniture: warm wood/tan tint */
+        case 6u: return (uint8_t)TILE_CLASS_SOLID;
+        case 7u: return (uint8_t)TILE_CLASS_SOLID; /* tree/canopy */
+        case 8u: return (uint8_t)TILE_CLASS_TALL;  /* roof */
+        case 9u: return (uint8_t)TILE_CLASS_LEDGE; /* stair */
+        default: break;
+        }
+    }
+    return cls;
 }
 
 static float neighbor_height(const gb_map_view_t *map, int vx, int vy) {
     if (vx < 0 || vx >= GB_MAP_VIEW_W || vy < 0 || vy >= GB_MAP_VIEW_H) {
         return 0.0f;
     }
-    return tile_height_for(map->tile_class[vy][vx], map->tileset);
+    return tile_height_for(map->tile_class[vy][vx], map->tileset,
+                           (uint8_t)(map->tile_id[vy][vx] & 0x7Fu));
 }
 
 static void class_tint(uint8_t cls, uint8_t tileset, float *tr, float *tg, float *tb) {
@@ -176,9 +202,9 @@ void voxel_mesher_build(const gb_map_view_t *map, const app_state_t *state, voxe
         const float z1 = z0 + VOXEL_TILE_SIZE;
 
         for (int vx = 0; vx < GB_MAP_VIEW_W; vx++) {
-            const uint8_t cls = map->tile_class[vy][vx];
-            const float h = tile_height_for(cls, tileset);
             const uint8_t tid = (uint8_t)(map->tile_id[vy][vx] & 0x7Fu);
+            const uint8_t cls = effective_class_for(map->tile_class[vy][vx], tileset, tid);
+            const float h = tile_height_for(map->tile_class[vy][vx], tileset, tid);
 
             const float tile_u = (float)(tid & 15u) * 8.0f;
             const float tile_v = (float)(tid >> 4)  * 8.0f;

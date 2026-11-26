@@ -39,12 +39,26 @@ void audio_write(const uint16_t addr, const uint8_t val)
     gb_audio_write(addr, val);
 }
 
-#include "peanut_gb.h"
+struct gb_s;
 
-static struct gb_s gb;
 static uint8_t    *rom_data = NULL;
 static size_t      rom_size = 0U;
 static size_t      rom_mask = 0U; /* rom_size - 1 if rom_size is a power of two, else 0 */
+
+static inline uint8_t gb_rom_read_inline(struct gb_s *g, const uint_fast32_t addr)
+{
+    (void)g;
+    if (rom_mask != 0U) {
+        /* Only non-zero while rom_data is loaded, so the masked index is in bounds. */
+        return rom_data[addr & rom_mask];
+    }
+    return (rom_data != NULL && addr < rom_size) ? rom_data[addr] : 0xFFU;
+}
+#define PEANUT_GB_INLINE_ROM_READ(g, a) gb_rom_read_inline((g), (a))
+
+#include "peanut_gb_fast.h"
+
+static struct gb_s gb;
 static uint8_t    *cart_ram = NULL;
 static size_t      cart_ram_size = 0U;
 static char       *sav_path = NULL;
@@ -58,15 +72,7 @@ static uint8_t     s_filter_mode = 0U;
 
 GB_FASTTEXT static uint8_t gb_rom_read(struct gb_s *g, const uint_fast32_t addr)
 {
-    (void)g;
-    if (rom_mask != 0U) {
-        /* Only non-zero while rom_data is loaded, so the masked index is in bounds. */
-        return rom_data[addr & rom_mask];
-    }
-    if (rom_data == NULL || addr >= rom_size) {
-        return 0xFFU;
-    }
-    return rom_data[addr];
+    return gb_rom_read_inline(g, addr);
 }
 
 static uint8_t gb_cart_ram_read(struct gb_s *g, const uint_fast32_t addr)

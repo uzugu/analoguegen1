@@ -175,6 +175,11 @@ int main(int argc, char **argv) {
 
         unsigned int t_3d0 = of_time_us();
         mod_manager_on_render_3d(&state);
+        bool has_2d_overlay = state.mods_menu_open || state.gen3box_open ||
+                              state.show_debug_hud ||
+                              state.snap.ui_overlay != (uint8_t)UI_OVERLAY_NONE ||
+                              state.snap.in_battle != 0;
+        renderer_set_cpu_overlay_needed(has_2d_overlay);
         if (voxel_3d_active) {
             r3d_end_scene();
         }

@@ -47,6 +47,7 @@ void renderer_blit_gb_subrect(const uint16_t *lcd_rgb565,
  * renderer_hw_scene_begin() flushes the draw framebuffer and clears zbuf_16 in FPGA hardware. */
 void renderer_hw_scene_begin(uint16_t *zbuf_16);
 void renderer_hw_scene_end(void);
+void renderer_set_cpu_overlay_needed(bool needed);
 void renderer_hw_tri_begin(const uint16_t *atlas_rgb565, int atlas_w, int atlas_h,
                            uint16_t *zbuf_16, bool alpha_key);
 void renderer_hw_tri_submit(const int16_t x[3], const int16_t y[3],

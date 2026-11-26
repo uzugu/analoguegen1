@@ -36,8 +36,12 @@ static uint16_t *s_draw_fb     = s_fb_rgb565;
 static uint16_t  s_draw_stride = RENDER_W;
 static bool      s_hw_tri      = false;
 #ifndef OF_PC
-static bool      s_hw_tri_active = false;
-static uint16_t *s_hw_tri_zbuf   = NULL;
+static bool      s_hw_tri_active      = false;
+static uint16_t *s_hw_tri_zbuf        = NULL;
+static int       s_gpu_fb_idx         = -1;
+static uint32_t  s_gpu_fence          = 0u;
+static bool      s_hw_scene_used      = false;
+static bool      s_cpu_overlay_needed = false;
 #endif
 
 /* Compact 5x7 ASCII bitmap font for ASCII 32..126 (column-major, LSB = top row). */
@@ -249,6 +253,12 @@ bool renderer_init(renderer_caps_t *out_caps) {
 #endif
 
     s_hw_tri = (s_rgb565_mode && caps.hw_vert_tri && caps.hw_vcolor);
+#ifndef OF_PC
+    s_gpu_fb_idx         = -1;
+    s_gpu_fence          = 0u;
+    s_hw_scene_used      = false;
+    s_cpu_overlay_needed = false;
+#endif
 
     if (out_caps) {
         *out_caps = caps;
@@ -259,6 +269,22 @@ bool renderer_init(renderer_caps_t *out_caps) {
 
 void renderer_begin_frame_noclear(void) {
     s_direct8_done = false;
+#ifndef OF_PC
+    s_hw_scene_used = false;
+    s_cpu_overlay_needed = false;
+    if (s_hw_tri && s_rgb565_mode) {
+        s_gpu_fb_idx = of_video_acquire_next(s_gpu_fb_idx, s_gpu_fence);
+        uint16_t *surf = (uint16_t *)(void *)of_video_buffer_addr(s_gpu_fb_idx);
+        if (surf) {
+            s_draw_fb = surf;
+            s_draw_stride = s_fb_stride_px;
+        } else {
+            s_draw_fb = s_fb_rgb565;
+            s_draw_stride = RENDER_W;
+        }
+        return;
+    }
+#endif
     if (s_rgb565_mode) {
         uint16_t *surf = of_video_surface16();
         if (surf) {
@@ -302,6 +328,18 @@ void renderer_begin_frame(uint16_t clear_color) {
 }
 
 void renderer_end_frame(void) {
+#ifndef OF_PC
+    if (s_hw_tri && s_rgb565_mode) {
+        if ((!s_hw_scene_used || s_cpu_overlay_needed) && s_draw_fb) {
+            of_cache_flush_range((void *)s_draw_fb,
+                                 (uint32_t)s_fb_stride_bytes * (uint32_t)RENDER_H);
+        }
+        of_video_wait_flip();
+        s_gpu_fence = of_gpu_flip_to(s_gpu_fb_idx);
+        of_gpu_kick();
+        return;
+    }
+#endif
     if (!s_rgb565_mode && !s_direct8_done) {
         uint8_t *dst8 = of_video_surface();
         if (dst8) {
@@ -691,6 +729,14 @@ void renderer_blit_gb_subrect(const uint16_t *lcd_rgb565,
     }
 }
 
+void renderer_set_cpu_overlay_needed(bool needed) {
+#ifndef OF_PC
+    s_cpu_overlay_needed = needed;
+#else
+    (void)needed;
+#endif
+}
+
 void renderer_hw_scene_begin(uint16_t *zbuf_16) {
 #ifndef OF_PC
     s_hw_tri_zbuf = NULL;
@@ -704,6 +750,7 @@ void renderer_hw_scene_begin(uint16_t *zbuf_16) {
                               (uint16_t)(RENDER_W * 2),
                               0u);
     s_hw_tri_zbuf = zbuf_16;
+    s_hw_scene_used = true;
 #else
     (void)zbuf_16;
 #endif
@@ -714,8 +761,10 @@ void renderer_hw_scene_end(void) {
     if (!s_hw_tri || !s_rgb565_mode || !s_draw_fb || !s_hw_tri_zbuf) {
         return;
     }
-    of_gpu_finish();
-    of_cache_inval_range((void *)s_draw_fb, (uint32_t)s_fb_stride_bytes * (uint32_t)RENDER_H);
+    if (s_cpu_overlay_needed) {
+        of_gpu_finish();
+        of_cache_inval_range((void *)s_draw_fb, (uint32_t)s_fb_stride_bytes * (uint32_t)RENDER_H);
+    }
     s_hw_tri_zbuf = NULL;
     s_hw_tri_active = false;
 #endif
