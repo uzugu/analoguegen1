@@ -5,9 +5,9 @@
 #include <stdint.h>
 #include "app_state.h"
 
-/* Visible 8x8 tile window extracted around the player (16x12 tiles = 8x6 walk cells, always even-aligned). */
-#define GB_MAP_VIEW_W 16
-#define GB_MAP_VIEW_H 12
+/* Visible 8x8 tile window extracted around the player (20x16 tiles = 10x8 walk cells, always even-aligned). */
+#define GB_MAP_VIEW_W 20
+#define GB_MAP_VIEW_H 16
 
 /* Decoded tileset atlas: 16x8 grid of 8x8 tiles (128 tiles = 0x00..0x7F). */
 #define GB_ATLAS_W    128
@@ -17,10 +17,10 @@ typedef enum {
     TILE_CLASS_GROUND = 0,  /* flat walkable path/ground (y = 0) */
     TILE_CLASS_GRASS,       /* tall grass / lawn (y = 0, lush green tint) */
     TILE_CLASS_WATER,       /* recessed animated water (y = -2, blue tint) */
-    TILE_CLASS_LEDGE,       /* low step/ledge (h = 6, earthy tan) */
-    TILE_CLASS_FENCE,       /* fences, signs, bushes (h = 10) */
-    TILE_CLASS_SOLID,       /* trees, walls, obstacles (h = 16) */
-    TILE_CLASS_TALL         /* buildings, roofs, tall walls (h = 26) */
+    TILE_CLASS_LEDGE,       /* low step/ledge (h = 5, earthy tan) */
+    TILE_CLASS_FENCE,       /* fences, signs, bushes (h = 8) */
+    TILE_CLASS_SOLID,       /* trees, walls, obstacles (h = 12 outdoor / 9 indoor) */
+    TILE_CLASS_TALL         /* buildings, roofs, tall walls (h = 20 + pitched roof) */
 } tile_class_t;
 
 typedef struct {

@@ -19,10 +19,10 @@ static float tile_height_for(uint8_t cls, uint8_t tileset) {
     case TILE_CLASS_WATER:  return -2.0f;
     case TILE_CLASS_GROUND: return  0.0f;
     case TILE_CLASS_GRASS:  return  0.0f;
-    case TILE_CLASS_LEDGE:  return  6.0f;
-    case TILE_CLASS_FENCE:  return  9.0f;
-    case TILE_CLASS_SOLID:  return (tileset == 0U) ? 14.0f : 10.0f;
-    case TILE_CLASS_TALL:   return 22.0f;
+    case TILE_CLASS_LEDGE:  return  5.0f;
+    case TILE_CLASS_FENCE:  return  8.0f;
+    case TILE_CLASS_SOLID:  return (tileset == 0U) ? 12.0f : 9.0f;
+    case TILE_CLASS_TALL:   return 20.0f;
     default:                return  0.0f;
     }
 }
@@ -111,6 +111,18 @@ static voxel_vert_t make_vert(float x, float y, float z, float u, float v, uint1
     return vert;
 }
 
+/* Emit a single CCW triangle. */
+static void emit_tri(voxel_mesh_t *out,
+                     voxel_vert_t v0, voxel_vert_t v1, voxel_vert_t v2) {
+    if (out->tri_count + 1 > VOXEL_MAX_TRIS) {
+        return;
+    }
+    voxel_tri_t *t = &out->tris[out->tri_count++];
+    t->v[0] = v0;
+    t->v[1] = v1;
+    t->v[2] = v2;
+}
+
 /* Emit a quad (tl -> bl -> br -> tr) as two CCW triangles. */
 static void emit_quad(voxel_mesh_t *out,
                       voxel_vert_t tl, voxel_vert_t bl,
@@ -128,6 +140,13 @@ static void emit_quad(voxel_mesh_t *out,
     t1->v[0] = tl;
     t1->v[1] = br;
     t1->v[2] = tr;
+}
+
+static bool neighbor_is_tall(const gb_map_view_t *map, int vx, int vy) {
+    if (vx < 0 || vx >= GB_MAP_VIEW_W || vy < 0 || vy >= GB_MAP_VIEW_H) {
+        return false;
+    }
+    return map->tile_class[vy][vx] == (uint8_t)TILE_CLASS_TALL;
 }
 
 void voxel_mesher_build(const gb_map_view_t *map, const app_state_t *state, voxel_mesh_t *out) {
@@ -172,8 +191,47 @@ void voxel_mesher_build(const gb_map_view_t *map, const app_state_t *state, voxe
                 }
             }
 
-            /* Top face (+Y): always emitted, CCW viewed from +Y */
-            {
+            /* Top face (+Y): pitched roof for outdoor buildings (TALL), flat top otherwise */
+            if (cls == (uint8_t)TILE_CLASS_TALL) {
+                const float zm = 0.5f * (z0 + z1);
+                const float vm = 0.5f * (v0 + v1);
+                const float um = 0.5f * (u0 + u1);
+                const float hr = h + 5.0f;
+                const uint16_t c_south_roof = shade_rgb565(cls, tileset, daytime_mode, FACE_SHADE_TOP);
+                const uint16_t c_north_roof = shade_rgb565(cls, tileset, daytime_mode, FACE_SHADE_EAST);
+
+                /* Front (South-facing) sloped roof plane */
+                emit_quad(out,
+                          make_vert(x0, hr, zm, u0, vm, c_south_roof),
+                          make_vert(x0, h,  z1, u0, v1, c_south_roof),
+                          make_vert(x1, h,  z1, u1, v1, c_south_roof),
+                          make_vert(x1, hr, zm, u1, vm, c_south_roof));
+
+                /* Back (North-facing) sloped roof plane */
+                emit_quad(out,
+                          make_vert(x0, h,  z0, u0, v0, c_north_roof),
+                          make_vert(x0, hr, zm, u0, vm, c_north_roof),
+                          make_vert(x1, hr, zm, u1, vm, c_north_roof),
+                          make_vert(x1, h,  z0, u1, v0, c_north_roof));
+
+                /* East gable end (+X) when not adjoining another TALL tile */
+                if (!neighbor_is_tall(map, vx + 1, vy)) {
+                    const uint16_t c_east = shade_rgb565(cls, tileset, daytime_mode, FACE_SHADE_EAST);
+                    emit_tri(out,
+                             make_vert(x1, hr, zm, um, v0, c_east),
+                             make_vert(x1, h,  z1, u0, v1, c_east),
+                             make_vert(x1, h,  z0, u1, v1, c_east));
+                }
+
+                /* West gable end (-X) when not adjoining another TALL tile */
+                if (!neighbor_is_tall(map, vx - 1, vy)) {
+                    const uint16_t c_west = shade_rgb565(cls, tileset, daytime_mode, FACE_SHADE_WEST);
+                    emit_tri(out,
+                             make_vert(x0, hr, zm, um, v0, c_west),
+                             make_vert(x0, h,  z0, u0, v1, c_west),
+                             make_vert(x0, h,  z1, u1, v1, c_west));
+                }
+            } else {
                 const uint16_t c_top = shade_rgb565(cls, tileset, daytime_mode, FACE_SHADE_TOP);
                 emit_quad(out,
                           make_vert(x0, h, z0, u0, v0, c_top),

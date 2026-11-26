@@ -130,13 +130,14 @@ static void battle_mon_colors(uint8_t type1, uint8_t type2,
 }
 
 /*
- * Decode Red's live 16x16 sprite directly from Pokemon Red's wShadowOAM[0..3]
- * (0xC300..0xC30F): each 4-byte OAM entry holds the exact VRAM tile index and
- * X/Y flip attributes computed by the game itself for standing, walking, biking,
- * and surfing animations.
+ * Decode a 4-sprite (16x16) character group from Pokemon Red's live wShadowOAM
+ * starting at base_addr: each 4-byte OAM entry holds the exact VRAM tile index
+ * and X/Y flip attributes computed by the game itself for standing, walking,
+ * biking, and surfing animations.
  */
-static bool decode_shadow_oam_player_16x16(uint16_t out_16x16[256],
-                                           uint16_t tint_shade1, uint16_t tint_shade2) {
+static bool decode_shadow_oam_group_16x16(uint16_t base_addr,
+                                          uint16_t out_16x16[256],
+                                          uint16_t tint_shade1, uint16_t tint_shade2) {
     static const uint8_t quad_ox[4] = { 0u, 8u, 0u, 8u };
     static const uint8_t quad_oy[4] = { 0u, 0u, 8u, 8u };
     const uint16_t outline_col = RGB565(24, 28, 36);
@@ -146,14 +147,14 @@ static bool decode_shadow_oam_player_16x16(uint16_t out_16x16[256],
         out_16x16[i] = 0u;
     }
 
-    /* Verify OAM entry 0 is on-screen (Y in 1..159). */
-    const uint8_t oam0_y = gb_brain_read8(0xC300u);
+    /* Verify entry 0 of the group is on-screen (Y in 1..159). */
+    const uint8_t oam0_y = gb_brain_read8(base_addr);
     if (oam0_y == 0u || oam0_y >= 160u) {
         return false;
     }
 
     for (int q = 0; q < 4; q++) {
-        const uint16_t oam_addr = (uint16_t)(0xC300u + (uint16_t)(q * 4));
+        const uint16_t oam_addr = (uint16_t)(base_addr + (uint16_t)(q * 4));
         const uint8_t oy_scr = gb_brain_read8(oam_addr);
         const uint8_t tile   = gb_brain_read8((uint16_t)(oam_addr + 2u));
         const uint8_t flags  = gb_brain_read8((uint16_t)(oam_addr + 3u));
@@ -193,6 +194,15 @@ static bool decode_shadow_oam_player_16x16(uint16_t out_16x16[256],
     }
 
     return has_pixels;
+}
+
+/*
+ * Decode Red's live 16x16 sprite directly from Pokemon Red's wShadowOAM[0..3]
+ * (0xC300..0xC30F).
+ */
+static bool decode_shadow_oam_player_16x16(uint16_t out_16x16[256],
+                                           uint16_t tint_shade1, uint16_t tint_shade2) {
+    return decode_shadow_oam_group_16x16(0xC300u, out_16x16, tint_shade1, tint_shade2);
 }
 
 static bool decode_vram_sprite_16x16(uint8_t img_idx, bool flip_x, bool flip_bottom_x,
@@ -327,7 +337,7 @@ static void mod_voxel_on_render_3d(const app_state_t *state) {
     r3d_camera_t cam;
     cam.target_x  = px;
     cam.target_z  = pz;
-    cam.fov_y_deg = 45.0f;
+    cam.fov_y_deg = 42.0f;
     if (state->snap.in_battle != 0) {
         cam.target_y  = 6.0f;
         cam.pitch_deg = 62.0f;
@@ -337,7 +347,7 @@ static void mod_voxel_on_render_3d(const app_state_t *state) {
         cam.target_y  = 4.0f;
         cam.pitch_deg = (float)state->voxel_pitch_deg;
         cam.yaw_deg   = 0.0f;
-        cam.distance  = 115.0f;
+        cam.distance  = 128.0f;
     }
     r3d_set_camera(&cam);
 
@@ -390,33 +400,44 @@ static void mod_voxel_on_render_3d(const app_state_t *state) {
         }
     }
 
-    /* Live NPC billboards from wSpriteStateData1/2 */
-    for (int i = 0; i < APP_MAX_NPCS; i++) {
-        const npc_snap_t *npc = &state->snap.npcs[i];
-        if (!npc->active) {
-            continue;
-        }
-        int dx = (int)npc->map_x - (int)state->snap.player_x;
-        int dy = (int)npc->map_y - (int)state->snap.player_y;
-        if (dx < -6 || dx > 6 || dy < -5 || dy > 5) {
-            continue;
-        }
-        float nx = s_map_view.player_local_tx * 8.0f + (float)(dx * 16);
-        float nz = s_map_view.player_local_ty * 8.0f + (float)(dy * 16);
-        const uint16_t off = (uint16_t)((i + 1) * 16);
-        const uint8_t npc_img  = gb_brain_read8((uint16_t)(GB_ADDR_SPRITE_DATA1 + off + GB_SPRITE1_IMAGE_INDEX));
-        const uint8_t npc_anim = gb_brain_read8((uint16_t)(GB_ADDR_SPRITE_DATA1 + off + 0x08u));
-        if (npc_img == 0xFFu) {
-            continue; /* hidden / off-screen sprite */
-        }
-        const bool npc_flip    = (npc->facing_dir == 12u);
-        const bool npc_legflip = ((npc->facing_dir == 0u || npc->facing_dir == 4u) &&
-                                  npc_anim == 3u);
-        if (decode_vram_sprite_16x16(npc_img, npc_flip, npc_legflip, spr_tex, RGB565(244, 218, 184), RGB565(72, 148, 224))) {
-            r3d_draw_sprite_billboard(nx, 0.0f, nz, 14.0f, 16.0f, spr_tex, 16, 16, false);
-        } else {
-            r3d_draw_billboard(nx, 0.0f, nz, 10.0f, 13.0f,
-                               RGB565(72, 148, 224), RGB565(240, 210, 175), false);
+    /* Live NPC billboards decoded directly from wShadowOAM[4..39] (0xC310..0xC39F) */
+    const uint8_t oam0_y = gb_brain_read8(0xC300u);
+    const uint8_t oam0_x = gb_brain_read8(0xC301u);
+    if (oam0_y != 0u && oam0_y < 160u) {
+        for (int i = 4; i <= 36; ) {
+            const uint16_t base = (uint16_t)(0xC300u + (uint16_t)(i * 4));
+            const uint8_t y0 = gb_brain_read8(base);
+            const uint8_t x0 = gb_brain_read8((uint16_t)(base + 1u));
+            if (y0 == 0u || y0 >= 160u) {
+                i++;
+                continue;
+            }
+            const uint8_t y1 = gb_brain_read8((uint16_t)(base + 4u));
+            const uint8_t x1 = gb_brain_read8((uint16_t)(base + 5u));
+            const uint8_t y2 = gb_brain_read8((uint16_t)(base + 8u));
+            const uint8_t x2 = gb_brain_read8((uint16_t)(base + 9u));
+            const uint8_t y3 = gb_brain_read8((uint16_t)(base + 12u));
+            const uint8_t x3 = gb_brain_read8((uint16_t)(base + 13u));
+
+            const bool is_16x16_grid = (x1 == (uint8_t)(x0 + 8u)) &&
+                                       (y1 == y0) &&
+                                       (x2 == x0) &&
+                                       (y2 == (uint8_t)(y0 + 8u)) &&
+                                       (x3 == (uint8_t)(x0 + 8u)) &&
+                                       (y3 == (uint8_t)(y0 + 8u));
+            if (!is_16x16_grid) {
+                i++;
+                continue;
+            }
+
+            if (decode_shadow_oam_group_16x16(base, spr_tex,
+                                              RGB565(244, 218, 184),
+                                              RGB565(72, 148, 224))) {
+                const float nx = px + (float)((int)x0 - (int)oam0_x);
+                const float nz = pz + (float)((int)y0 - (int)oam0_y);
+                r3d_draw_sprite_billboard(nx, 0.0f, nz, 14.0f, 16.0f, spr_tex, 16, 16, false);
+            }
+            i += 4;
         }
     }
 

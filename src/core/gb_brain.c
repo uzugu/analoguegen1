@@ -3,6 +3,10 @@
 #include "pokered_ram.h"
 #ifndef OF_PC
 #include "of_file.h"
+#include "of_fastram.h"
+#define GB_FASTTEXT OF_FASTTEXT
+#else
+#define GB_FASTTEXT
 #endif
 
 #include <stdio.h>
@@ -52,7 +56,7 @@ static uint16_t    lcd_fb[GB_LCD_W * GB_LCD_H];
 static bool        s_skip_ppu = false;
 static uint8_t     s_filter_mode = 0U;
 
-static uint8_t gb_rom_read(struct gb_s *g, const uint_fast32_t addr)
+GB_FASTTEXT static uint8_t gb_rom_read(struct gb_s *g, const uint_fast32_t addr)
 {
     (void)g;
     if (rom_mask != 0U) {

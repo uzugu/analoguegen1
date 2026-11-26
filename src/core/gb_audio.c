@@ -5,7 +5,7 @@
 #include <stdint.h>
 
 #ifndef AUDIO_SAMPLE_RATE
-#define AUDIO_SAMPLE_RATE 12000
+#define AUDIO_SAMPLE_RATE 16000
 #endif
 
 #ifndef MINIGB_APU_AUDIO_FORMAT_S16SYS
@@ -41,7 +41,7 @@ void gb_audio_push_frame(void)
 
     minigb_apu_audio_callback(&s_apu, s_audio_24k);
 
-    /* Nearest-neighbor upsample AUDIO_SAMPLE_RATE -> 48 kHz stereo (e.g. 4x from 12 kHz). */
+    /* Nearest-neighbor upsample AUDIO_SAMPLE_RATE -> 48 kHz stereo (e.g. 3x from 16 kHz). */
     unsigned dst_idx = 0u;
     for (unsigned i = 0u; i < AUDIO_SAMPLES; i++) {
         int16_t l = s_audio_24k[i * 2u];

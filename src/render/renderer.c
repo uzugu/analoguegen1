@@ -37,6 +37,7 @@ static uint16_t  s_draw_stride = RENDER_W;
 static bool      s_hw_tri      = false;
 #ifndef OF_PC
 static bool      s_hw_tri_active = false;
+static uint16_t *s_hw_tri_zbuf   = NULL;
 #endif
 
 /* Compact 5x7 ASCII bitmap font for ASCII 32..126 (column-major, LSB = top row). */
@@ -247,7 +248,7 @@ bool renderer_init(renderer_caps_t *out_caps) {
     caps.hw_vcolor = false;
 #endif
 
-    s_hw_tri = (caps.hw_vert_tri && caps.hw_vcolor);
+    s_hw_tri = (s_rgb565_mode && caps.hw_vert_tri && caps.hw_vcolor);
 
     if (out_caps) {
         *out_caps = caps;
@@ -690,9 +691,11 @@ void renderer_blit_gb_subrect(const uint16_t *lcd_rgb565,
     }
 }
 
-void renderer_hw_tri_begin(const uint16_t *atlas_rgb565, int atlas_w, int atlas_h, uint16_t *zbuf_16) {
+void renderer_hw_tri_begin(const uint16_t *atlas_rgb565, int atlas_w, int atlas_h,
+                           uint16_t *zbuf_16, bool alpha_key) {
 #ifndef OF_PC
     s_hw_tri_active = false;
+    s_hw_tri_zbuf = NULL;
     if (!s_hw_tri || !s_rgb565_mode || !s_draw_fb || !atlas_rgb565 || !zbuf_16 ||
         atlas_w <= 0 || atlas_h <= 0) {
         return;
@@ -700,7 +703,8 @@ void renderer_hw_tri_begin(const uint16_t *atlas_rgb565, int atlas_w, int atlas_
 
     of_cache_flush_range((void *)(uintptr_t)atlas_rgb565, (uint32_t)(atlas_w * atlas_h * 2));
     of_cache_flush_range((void *)zbuf_16, (uint32_t)(RENDER_W * RENDER_H * 2));
-    of_cache_flush_range((void *)s_draw_fb, (uint32_t)(RENDER_W * RENDER_H * 2));
+    of_cache_flush_range((void *)s_draw_fb, (uint32_t)s_fb_stride_bytes * (uint32_t)RENDER_H);
+    GPU_TEX_FLUSH = 1u;
 
     of_gpu_tri_state_t st;
     memset(&st, 0, sizeof(st));
@@ -715,19 +719,22 @@ void renderer_hw_tri_begin(const uint16_t *atlas_rgb565, int atlas_w, int atlas_
     st.z_major_step  = RENDER_W * 2;
     st.z_minor_step  = 2;
     st.z_mode        = OF_GPU_PARAM_Z_TEST_WRITE;
-    st.flags         = OF_GPU_SPAN_TRUECOLOR | OF_GPU_SPAN_PERSP;
+    st.flags         = (uint8_t)(OF_GPU_SPAN_TRUECOLOR | OF_GPU_SPAN_PERSP |
+                                 (alpha_key ? OF_GPU_SPAN_SKIP_ZERO : 0u));
     st.clip_x0       = 0;
-    st.clip_x1       = RENDER_W - 1;
+    st.clip_x1       = RENDER_W;
     st.clip_y0       = 0;
-    st.clip_y1       = RENDER_H - 1;
+    st.clip_y1       = RENDER_H;
 
     of_gpu_set_tri_state(&st);
+    s_hw_tri_zbuf = zbuf_16;
     s_hw_tri_active = true;
 #else
     (void)atlas_rgb565;
     (void)atlas_w;
     (void)atlas_h;
     (void)zbuf_16;
+    (void)alpha_key;
 #endif
 }
 
@@ -757,7 +764,11 @@ void renderer_hw_tri_end(void) {
         return;
     }
     of_gpu_finish();
-    of_cache_inval_range((void *)s_draw_fb, (uint32_t)(RENDER_W * RENDER_H * 2));
+    of_cache_inval_range((void *)s_draw_fb, (uint32_t)s_fb_stride_bytes * (uint32_t)RENDER_H);
+    if (s_hw_tri_zbuf) {
+        of_cache_inval_range((void *)s_hw_tri_zbuf, (uint32_t)(RENDER_W * RENDER_H * 2));
+        s_hw_tri_zbuf = NULL;
+    }
     s_hw_tri_active = false;
 #endif
 }

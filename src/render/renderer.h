@@ -44,7 +44,8 @@ void renderer_blit_gb_subrect(const uint16_t *lcd_rgb565,
                               int dst_x, int dst_y);
 
 /* Pocket os30 hardware triangle batching (implemented inside renderer.c via of_gpu.h). */
-void renderer_hw_tri_begin(const uint16_t *atlas_rgb565, int atlas_w, int atlas_h, uint16_t *zbuf_16);
+void renderer_hw_tri_begin(const uint16_t *atlas_rgb565, int atlas_w, int atlas_h,
+                           uint16_t *zbuf_16, bool alpha_key);
 void renderer_hw_tri_submit(const int16_t x[3], const int16_t y[3],
                             const int32_t s[3], const int32_t t[3],
                             const int32_t zi[3], const uint16_t rgb[3],

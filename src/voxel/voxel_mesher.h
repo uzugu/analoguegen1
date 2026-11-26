@@ -5,7 +5,7 @@
 #include "app_state.h"
 #include "gb_map.h"
 
-#define VOXEL_MAX_TRIS 2400
+#define VOXEL_MAX_TRIS 3072
 
 typedef struct {
     float    x, y, z;   /* world coordinates (8.0 units = 1 8x8 tile; +X east, +Y up, +Z south) */
